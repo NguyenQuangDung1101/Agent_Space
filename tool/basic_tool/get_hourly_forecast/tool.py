@@ -1,16 +1,6 @@
-from datetime import datetime
 import pandas as pd
 import requests
 
-
-def get_current_datetime():
-    now = datetime.now()
-    date_str = now.strftime('%Y-%m-%d')
-    time_str = now.strftime('%H:%M:%S')
-    weekday_str = now.strftime('%A')
-    
-    output = f"Current date: {date_str} - Day: {weekday_str} - Current time: {time_str}"
-    return output
 
 WEATHER_CODES = {
     0: "Clear sky",
@@ -86,6 +76,8 @@ def get_hourly_forecast(current_location, latitude, longitude, date: str) -> str
     else:
         return f"{noti}Date {date} not available in forecast range"
 
+
+# Helper ======================================================================================
 
 def get_current_location(return_value = False):
     response = requests.get("https://ipinfo.io/json")

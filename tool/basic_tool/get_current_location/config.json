@@ -1,0 +1,11 @@
+[
+    {
+        "name": "get_current_location",
+        "description": "Get the current geographical location based on IP address. Returns latitude, longitude, city, and country information.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {},
+            "required": []
+        }
+    }
+]
