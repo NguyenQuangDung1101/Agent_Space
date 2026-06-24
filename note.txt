@@ -2,3 +2,52 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\agentspace\Scripts\Activate.ps1
 
 ollama signin
+
+AGENT_SPACE/
+│
+├── app.py                                      # Main API that receives user tasks and calls Agent Space Manager
+├── requirements.txt                            # Python dependencies
+│
+├── agent/
+│   ├── agent.json                              # Agent registry: identity, capability, paths, ports and caller access
+│   │
+│   ├── analyze_agent/
+│   │   ├── server.py                           # Runs the fixed Analyze Agent
+│   │   ├── system_prompt.txt                    # Defines task analysis and requirement extraction behavior
+│   │   └── builtin_tool.py                     # Private deterministic tools used only by Analyze Agent
+│   │
+│   ├── planner_agent/
+│   │   ├── server.py                           # Runs Planner and returns a validated team plan
+│   │   ├── system_prompt.txt                    # Defines team formation, tool assignment and orchestration planning
+│   │   └── builtin_tool.py                     # Private helpers used only for validating or building plans
+│   │
+│   ├── agent_of_requirement/
+│   │   ├── server.py                           # Creates dynamic agent instances from caller prompt and assigned tools
+│   │   ├── base_prompt.txt                      # Minimal permanent rules combined with caller-provided system prompt
+│   │   └── builtin_tool.py                     # Private built-ins for this template; initially empty
+│   │
+│   └── synthesizer_agent/
+│       ├── server.py                           # Runs the fixed Synthesizer Agent
+│       ├── system_prompt.txt                    # Defines how team results are combined into the final response
+│       └── builtin_tool.py                     # Private formatting or result-validation helpers
+│
+├── tool/
+│   ├── tool.json                               # Shared-tool list and accessibility/assignment permissions only
+│   │
+│   └── get_current_datetime/
+│       ├── config.json                         # Tool description and input/output schemas shown to assigned agents
+│       └── tool.py                             # Implements the current-date-and-time operation
+│
+├── share/
+│   ├── local_llm.py                            # Existing Copilot wrapper for Ollama inference
+│   ├── agent.py                                # Generic agent loop for tools, delegation, memory and final answers
+│   ├── schemas.py                              # Shared structures for agent calls, team plans and execution results
+│   ├── registry.py                             # Loads and validates agent.json, tool.json and component paths
+│   └── tool_loader.py                          # Loads assigned shared tools and each agent's private built-in tools
+│
+├── agentspace/
+│   ├── manager.py                              # Controls analysis, planning, validation, team creation and synthesis
+│   └── orchestrator.py                         # Executes the orchestration pattern selected by Planner
+│
+└── data/
+    └── sessions/                               # Stores generated session, plan, team and execution information

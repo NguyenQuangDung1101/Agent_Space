@@ -14,7 +14,6 @@ from share.local_llm import Copilot, load_system_prompt
 # ──────────────────────────────────────────────────────────────────────────────
 
 TOOL_CALL_RE = re.compile(r"<tool_call>\s*(\{.*?\})\s*</tool_call>", re.DOTALL)
-COMMUNICATION_RE = re.compile(r"<communication>\s*(\{.*?\})\s*</communication>", re.DOTALL)
 FINAL_ANSWER_RE = re.compile(r"<final_answer>\s*(.*?)\s*</final_answer>", re.DOTALL)
 
 def render_tools_contract(tool_spec: List[Dict[str, Any]]) -> str:
