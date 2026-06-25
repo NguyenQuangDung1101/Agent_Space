@@ -3,7 +3,8 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ollama signin
 python -m share.agent 
-
+python -m uvicorn agent.agent_of_requirement.server:app --port 8001
+python -m uvicorn agent.analyze_agent.server:app --port 8002
 
 
 1.  share/schemas.py
