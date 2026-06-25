@@ -1,11 +1,18 @@
 from datetime import datetime
+from typing import Any
 
 
-def get_current_datetime():
-    now = datetime.now()
-    date_str = now.strftime('%Y-%m-%d')
-    time_str = now.strftime('%H:%M:%S')
-    weekday_str = now.strftime('%A')
-    
-    output = f"Current date: {date_str} - Day: {weekday_str} - Current time: {time_str}"
-    return output
+def run(arguments: dict[str, Any] | None = None) -> dict[str, str]:
+    now = datetime.now().astimezone()
+
+    return {
+        "datetime": now.isoformat(timespec="seconds"),
+        "date": now.strftime("%Y-%m-%d"),
+        "time": now.strftime("%H:%M:%S"),
+        "weekday": now.strftime("%A"),
+        "timezone": now.tzname() or "local",
+    }
+
+
+if __name__ == "__main__":
+    print(run())

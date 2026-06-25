@@ -2,6 +2,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\agentspace\Scripts\Activate.ps1
 
 ollama signin
+python -m share.agent 
 
 
 

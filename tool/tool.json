@@ -1,0 +1,6 @@
+[
+    {
+        "id": "get_current_datetime",
+        "path": "tool/get_current_datetime"
+    }
+]

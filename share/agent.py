@@ -781,19 +781,46 @@ def build_agent(
 
 
 if __name__ == "__main__":
-    import asyncio
+    # async def main():
+    #     first_prompt = "hello"
+
+    #     agent = build_agent(
+    #         system_prompt_path="./agent/analyze_agent/system_prompt.txt",
+    #         model="gemma4:31b-cloud",
+    #         base_url="http://localhost:11434",
+    #     )
+
+    #     await agent.chat_cli(
+    #         first_user_prompt=first_prompt,
+    #     )
+
+    # asyncio.run(main())
+
 
     async def main():
-        first_prompt = "hello"
+        from share.registry import Registry
+        from share.tool_loader import ToolLoader
+
+        registry = Registry()
+
+        tool_loader = ToolLoader(
+            registry=registry,
+            assigned_tool_ids=[
+                "get_current_datetime",
+            ],
+        )
 
         agent = build_agent(
-            system_prompt_path="./agent/analyze_agent/system_prompt.txt",
+            system_prompt_path=(
+                "./agent/analyze_agent/system_prompt.txt"
+            ),
             model="gemma4:31b-cloud",
             base_url="http://localhost:11434",
+            tool_spec=tool_loader.get_tool_spec(),
+            tool_executor=tool_loader.execute,
+            history_mode="summary",
         )
 
-        await agent.chat_cli(
-            first_user_prompt=first_prompt,
-        )
+        await agent.chat_cli()
 
     asyncio.run(main())

@@ -1,0 +1,44 @@
+[
+  {
+    "id": "analyze_agent",
+    "type": "fixed",
+    "description": "Analyze user requests and extract structured task requirements.",
+    "path": "agent/analyze_agent",
+    "prompt_path": "agent/analyze_agent/system_prompt.txt",
+    "allowed_callers": [
+      "manager"
+    ]
+  },
+  {
+    "id": "planner_agent",
+    "type": "fixed",
+    "description": "Create and organize validated agent team plans.",
+    "path": "agent/planner_agent",
+    "prompt_path": "agent/planner_agent/system_prompt.txt",
+    "allowed_callers": [
+      "manager"
+    ]
+  },
+  {
+    "id": "agent_of_requirement",
+    "type": "dynamic",
+    "description": "Create specialized runtime agents from supplied prompts and tools.",
+    "path": "agent/agent_of_requirement",
+    "prompt_path": "agent/agent_of_requirement/base_prompt.txt",
+    "allowed_callers": [
+      "manager",
+      "analyze_agent",
+      "planner_agent"
+    ]
+  },
+  {
+    "id": "synthesizer_agent",
+    "type": "fixed",
+    "description": "Combine execution results into one final response.",
+    "path": "agent/synthesizer_agent",
+    "prompt_path": "agent/synthesizer_agent/system_prompt.txt",
+    "allowed_callers": [
+      "manager"
+    ]
+  }
+]
