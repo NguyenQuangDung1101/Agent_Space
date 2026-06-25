@@ -3,51 +3,364 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ollama signin
 
+
+
+1.  share/schemas.py
+
+2.  tool/get_current_datetime/config.json
+3.  tool/get_current_datetime/tool.py
+4.  tool/tool.json
+
+5.  agent/agent.json
+6.  share/registry.py
+7.  share/tool_loader.py
+
+8.  share/agent.py
+
+9.  agent/agent_of_requirement/base_prompt.txt
+10. agent/agent_of_requirement/service.py
+11. agent/agent_of_requirement/server.py
+
+12. agent/analyze_agent/system_prompt.txt
+13. agent/analyze_agent/service.py
+14. agent/analyze_agent/server.py
+
+15. core/manager.py
+16. app.py
+
+17. agent/planner_agent/system_prompt.txt
+18. agent/planner_agent/service.py
+19. agent/planner_agent/server.py
+
+20. core/orchestrator.py
+
+21. agent/synthesizer_agent/system_prompt.txt
+22. agent/synthesizer_agent/service.py
+23. agent/synthesizer_agent/server.py
+
+24. Communication and delegation
+25. Parallel and supervisor orchestration
+26. Docker and production infrastructure
+
+
+
+
+
+
+
+
+## AGENT SPACE — PROJECT STRUCTURE
+
+```text
 AGENT_SPACE/
 │
-├── app.py                                      # Main API that receives user tasks and calls Agent Space Manager
-├── requirements.txt                            # Python dependencies
+├── app.py
+│   # Main application entry point.
+│   # Receives user requests, creates a session, calls the Manager,
+│   # and returns the final execution result.
+│
+├── requirements.txt
+│   # Lists the external Python packages required by the project.
 │
 ├── agent/
-│   ├── agent.json                              # Agent registry: identity, capability, paths, ports and caller access
+│   ├── agent.json
+│   │   # Central agent registry.
+│   │   # Stores each agent's ID, type, description, capabilities,
+│   │   # model settings, server path, prompt path, host, port,
+│   │   # enabled status, and which components are allowed to call it.
 │   │
 │   ├── analyze_agent/
-│   │   ├── server.py                           # Runs the fixed Analyze Agent
-│   │   ├── system_prompt.txt                    # Defines task analysis and requirement extraction behavior
-│   │   └── builtin_tool.py                     # Private deterministic tools used only by Analyze Agent
+│   │   ├── server.py
+│   │   │   # HTTP server for the fixed Analyze Agent.
+│   │   │   # Receives the original user request, analyzes its objective,
+│   │   │   # constraints, expected output, and whether delegation is needed.
+│   │   │
+│   │   ├── system_prompt.txt
+│   │   │   # Permanent instructions for task analysis,
+│   │   │   # requirement extraction, and execution-mode recommendation.
+│   │   │
+│   │   └── builtin_tool.py
+│   │       # Contains deterministic tools available only to Analyze Agent.
+│   │       # These tools are private and are not registered in tool.json.
 │   │
 │   ├── planner_agent/
-│   │   ├── server.py                           # Runs Planner and returns a validated team plan
-│   │   ├── system_prompt.txt                    # Defines team formation, tool assignment and orchestration planning
-│   │   └── builtin_tool.py                     # Private helpers used only for validating or building plans
+│   │   ├── server.py
+│   │   │   # HTTP server for the fixed Planner Agent.
+│   │   │   # Receives the analyzed task and available agent/tool catalogs,
+│   │   │   # then proposes a team, tool distribution, tasks, dependencies,
+│   │   │   # and an orchestration pattern.
+│   │   │
+│   │   ├── system_prompt.txt
+│   │   │   # Permanent instructions for team formation,
+│   │   │   # tool assignment, task decomposition, and orchestration selection.
+│   │   │
+│   │   └── builtin_tool.py
+│   │       # Private deterministic helpers for Planner Agent,
+│   │       # such as checking or formatting a generated Team Plan.
 │   │
 │   ├── agent_of_requirement/
-│   │   ├── server.py                           # Creates dynamic agent instances from caller prompt and assigned tools
-│   │   ├── base_prompt.txt                      # Minimal permanent rules combined with caller-provided system prompt
-│   │   └── builtin_tool.py                     # Private built-ins for this template; initially empty
+│   │   ├── server.py
+│   │   │   # HTTP server for a general-purpose dynamic agent template.
+│   │   │   # Creates an isolated runtime instance using a caller-provided
+│   │   │   # system prompt, task, input context, and assigned shared tools.
+│   │   │
+│   │   ├── base_prompt.txt
+│   │   │   # Minimal permanent safety and output rules.
+│   │   │   # Combined at runtime with the specialized prompt supplied
+│   │   │   # by Analyze Agent, Planner Agent, or Manager.
+│   │   │
+│   │   └── builtin_tool.py
+│   │       # Private built-in tools shared by all runtime instances
+│   │       # of Agent of Requirement; initially this may be empty.
 │   │
 │   └── synthesizer_agent/
-│       ├── server.py                           # Runs the fixed Synthesizer Agent
-│       ├── system_prompt.txt                    # Defines how team results are combined into the final response
-│       └── builtin_tool.py                     # Private formatting or result-validation helpers
+│       ├── server.py
+│       │   # HTTP server for the fixed Synthesizer Agent.
+│       │   # Receives the original task, analysis, execution plan,
+│       │   # agent outputs, tool results, and failures,
+│       │   # then creates one final response for the user.
+│       │
+│       ├── system_prompt.txt
+│       │   # Permanent instructions for combining, checking,
+│       │   # and presenting execution results without inventing information.
+│       │
+│       └── builtin_tool.py
+│           # Private deterministic helpers for final-result formatting
+│           # or validation; initially this may be empty.
 │
 ├── tool/
-│   ├── tool.json                               # Shared-tool list and accessibility/assignment permissions only
+│   ├── tool.json
+│   │   # Shared-tool registry containing only tool IDs, folder paths,
+│   │   # enabled states, visibility, assignment permissions,
+│   │   # and which agent definitions may execute each tool.
+│   │   # Full tool descriptions and schemas are stored inside each tool folder.
 │   │
 │   └── get_current_datetime/
-│       ├── config.json                         # Tool description and input/output schemas shown to assigned agents
-│       └── tool.py                             # Implements the current-date-and-time operation
+│       ├── config.json
+│       │   # Describes the tool to an assigned agent.
+│       │   # Contains its name, purpose, input schema, output schema,
+│       │   # and optional usage examples.
+│       │
+│       └── tool.py
+│           # Implements the actual current-date-and-time operation.
+│           # Contains no agent, planning, or orchestration logic.
 │
 ├── share/
-│   ├── local_llm.py                            # Existing Copilot wrapper for Ollama inference
-│   ├── agent.py                                # Generic agent loop for tools, delegation, memory and final answers
-│   ├── schemas.py                              # Shared structures for agent calls, team plans and execution results
-│   ├── registry.py                             # Loads and validates agent.json, tool.json and component paths
-│   └── tool_loader.py                          # Loads assigned shared tools and each agent's private built-in tools
+│   ├── local_llm.py
+│   │   # Existing Copilot wrapper used by all agents
+│   │   # to send prompts to the configured Ollama-compatible LLM endpoint.
+│   │
+│   ├── agent.py
+│   │   # Generic reusable agent runtime.
+│   │   # Manages conversation history, LLM inference, tool-call parsing,
+│   │   # communication requests, delegation requests, tool results,
+│   │   # and final-answer extraction.
+│   │
+│   ├── schemas.py
+│   │   # Defines common request and response structures used throughout
+│   │   # the project, such as AgentRequest, AgentResult, TeamPlan,
+│   │   # TeamMember, ToolAssignment, Message, and ExecutionResult.
+│   │
+│   ├── registry.py
+│   │   # Loads and validates agent.json and tool.json.
+│   │   # Resolves project-relative paths, returns agent/tool catalogs,
+│   │   # and checks call, visibility, assignment, and execution permissions.
+│   │
+│   └── tool_loader.py
+│       # Loads an agent's private built-in tools and assigned shared tools.
+│       # Reads shared-tool config.json files, imports tool functions,
+│       # builds the tool specification shown to the LLM,
+│       # and executes only tools assigned to that runtime instance.
 │
-├── agentspace/
-│   ├── manager.py                              # Controls analysis, planning, validation, team creation and synthesis
-│   └── orchestrator.py                         # Executes the orchestration pattern selected by Planner
+├── core/
+│   ├── manager.py
+│   │   # Main control layer of Agent Space.
+│   │   # Creates sessions, calls Analyze Agent, chooses team or single mode,
+│   │   # validates agent/tool permissions, creates runtime instances,
+│   │   # routes communication, calls Synthesizer Agent when required,
+│   │   # and saves the final session result.
+│   │
+│   └── orchestrator.py
+│       # Executes a validated Team Plan.
+│       # Supports the orchestration patterns selected by Planner,
+│       # schedules agent instances, passes outputs between tasks,
+│       # routes direct or broadcast messages, and collects execution results.
 │
 └── data/
-    └── sessions/                               # Stores generated session, plan, team and execution information
+    └── sessions/
+        # Runtime-generated storage.
+        # Each session folder contains the original request, analysis,
+        # selected execution mode, team or single-agent configuration,
+        # agent messages, tool calls, outputs, status, timestamps,
+        # and the final saved result.
+```
+
+## MAIN EXECUTION FLOW
+
+```text
+Receive user request
+    ↓
+Create session
+    ├── Generate session ID
+    ├── Create data/sessions/<session_id>/
+    ├── Save original request
+    └── Set session status to RUNNING
+    ↓
+Call Analyze Agent
+    ├── Identify objective and constraints
+    ├── Determine required capabilities
+    ├── Detect missing information
+    └── Recommend team or single-agent execution
+    ↓
+Handle optional Analyze delegation
+    ├── Analyze Agent may request Agent of Requirement
+    ├── Analyze Agent provides its runtime system prompt
+    ├── Analyze Agent selects permitted tools when needed
+    └── Manager validates and executes the delegated analysis
+    ↓
+Manager selects an execution branch
+```
+
+### Branch A — Team execution
+
+```text
+-------------------- TEAM EXECUTION --------------------
+
+Call Planner Agent
+    ├── Provide analyzed task
+    ├── Provide available agent catalog
+    ├── Provide available shared-tool catalog
+    └── Provide supported orchestration patterns
+    ↓
+Planner creates Team Plan
+    ├── Select agent definitions
+    ├── Create runtime roles and tasks
+    ├── Define prompts for Agent of Requirement instances
+    ├── Assign shared tools to team members
+    ├── Define task dependencies
+    └── Select orchestration pattern
+    ↓
+Manager validates Team Plan
+    ├── Validate agents and caller permissions
+    ├── Validate tool assignment and usage permissions
+    ├── Validate dynamic system prompts
+    ├── Validate task dependencies
+    └── Validate the orchestration pattern
+    ↓
+Create runtime agent instances
+    ├── Generate unique instance IDs
+    ├── Store each member's role and task
+    ├── Create private conversation state
+    └── Create shared team context
+    ↓
+Distribute selected tool configurations
+    ├── Load private built-in tools
+    ├── Load assigned shared-tool config.json files
+    ├── Build the tool contract for each agent
+    └── Prevent access to unassigned tools
+    ↓
+Execute selected orchestration pattern
+    ├── Sequential
+    ├── Parallel
+    └── Supervisor
+    ↓
+Collect team outputs
+    ├── Agent results
+    ├── Tool results
+    ├── Messages
+    ├── Errors
+    └── Completion status
+    ↓
+Call Synthesizer Agent
+    ├── Provide original request
+    ├── Provide analysis and Team Plan
+    ├── Provide execution results
+    └── Generate the final user response
+
+--------------------------------------------------------
+```
+
+### Branch B — Single-agent execution
+
+```text
+---------------- SINGLE-AGENT EXECUTION ----------------
+
+Select one specific agent
+    ├── Analyze Agent
+    ├── Planner Agent
+    ├── Synthesizer Agent
+    └── Agent of Requirement
+    ↓
+Prepare runtime request
+    ├── Define the agent task
+    ├── Provide required input context
+    ├── Assign permitted shared tools when needed
+    └── Provide a runtime system prompt when using Agent of Requirement
+    ↓
+Manager validates request
+    ├── Validate agent availability
+    ├── Validate caller permission
+    ├── Validate tool assignment
+    └── Validate the dynamic prompt when required
+    ↓
+Create runtime agent instance
+    ↓
+Load built-in and assigned shared tools
+    ↓
+Execute the selected agent
+    ↓
+Return the agent result directly
+
+--------------------------------------------------------
+```
+
+## FINAL SESSION STEP
+
+```text
+Team result or single-agent result
+    ↓
+Save session result
+    ├── Save execution mode
+    ├── Save selected agents and assigned tools
+    ├── Save Team Plan when applicable
+    ├── Save messages and tool-call history
+    ├── Save outputs and errors
+    ├── Save final response
+    └── Set session status to COMPLETED or FAILED
+```
+
+## RESPONSIBILITY SUMMARY
+
+```text
+Analyze Agent
+    Understands the request and may delegate focused analysis.
+
+Planner Agent
+    Forms the team, assigns tools, defines tasks,
+    and selects the orchestration pattern.
+
+Manager
+    Controls the process, validates every action,
+    creates runtime instances, distributes tools,
+    and chooses between team and single-agent execution.
+
+Orchestrator
+    Executes only validated Team Plans
+    and handles communication between team members.
+
+Agent of Requirement
+    Becomes a specialized runtime agent based on
+    the caller-provided system prompt and assigned tools.
+
+Synthesizer Agent
+    Converts collected team results into the final user response.
+
+tool.json
+    Controls tool discovery and accessibility.
+
+Tool config.json
+    Teaches the assigned agent how to use the tool.
+
+tool.py
+    Performs the actual deterministic operation.
+```
