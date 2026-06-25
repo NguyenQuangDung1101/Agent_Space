@@ -5,47 +5,17 @@ ollama signin
 python -m share.agent 
 python -m uvicorn agent.agent_of_requirement.server:app --port 8001
 python -m uvicorn agent.analyze_agent.server:app --port 8002
+python -m uvicorn agent.planner_agent.server:app --port 8003
+python -m uvicorn agent.synthesizer_agent.server:app --port 8004
 
+curl -X POST "http://127.0.0.1:8002/run" ^
+  -H "Content-Type: application/json" ^
+  -d "{\"session_id\":\"test-session-1\",\"caller_id\":\"manager\",\"task\":\"Create a Python program that reads a CSV file and calculates average student scores.\",\"context\":{},\"assigned_tool_ids\":[],\"max_steps\":5}"
 
-1.  share/schemas.py
-
-2.  tool/get_current_datetime/config.json
-3.  tool/get_current_datetime/tool.py
-4.  tool/tool.json
-
-5.  agent/agent.json
-6.  share/registry.py
-7.  share/tool_loader.py
-
-8.  share/agent.py
-
-9.  agent/agent_of_requirement/base_prompt.txt
-10. agent/agent_of_requirement/service.py
-11. agent/agent_of_requirement/server.py
-
-12. agent/analyze_agent/system_prompt.txt
-13. agent/analyze_agent/service.py
-14. agent/analyze_agent/server.py
-
-15. core/manager.py
-16. app.py
-
-17. agent/planner_agent/system_prompt.txt
-18. agent/planner_agent/service.py
-19. agent/planner_agent/server.py
-
-20. core/orchestrator.py
-
-21. agent/synthesizer_agent/system_prompt.txt
-22. agent/synthesizer_agent/service.py
-23. agent/synthesizer_agent/server.py
 
 24. Communication and delegation
 25. Parallel and supervisor orchestration
 26. Docker and production infrastructure
-
-
-
 
 
 
