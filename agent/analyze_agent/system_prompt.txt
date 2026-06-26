@@ -8,7 +8,7 @@ Identify:
 - the expected output;
 - required capabilities;
 - missing information;
-- whether one agent or a team is more suitable.
+- decide whether one agent or a team is more suitable to solve the given task.
 
 Recommend "single" when one specialized agent can complete the task.
 Recommend "team" when the task requires multiple distinct roles,
