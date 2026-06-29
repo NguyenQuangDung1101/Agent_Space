@@ -11,6 +11,7 @@ from pydantic import (
 )
 
 from core.manager import AgentSpaceManager
+from share.registry import Registry
 from share.schemas import (
     ExecutionResult,
     SessionRecord,
@@ -46,6 +47,9 @@ app = FastAPI(
     title="Agent Space",
     version="0.1.0",
 )
+
+registry = Registry()
+registry.print_catalogs()
 
 manager = AgentSpaceManager()
 

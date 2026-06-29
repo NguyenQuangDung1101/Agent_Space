@@ -29,6 +29,7 @@ CURRENT STATE
 
 NEXT IMPLEMENTATION STEPS
 
+```text
 1. Update shared schemas
     ├── Add SingleAgentPlan:
     │   ├── agent_id
@@ -39,89 +40,95 @@ NEXT IMPLEMENTATION STEPS
     │   ├── execution_mode: single | team
     │   └── single_plan: SingleAgentPlan | null
     ├── Keep TeamPlan for Planner output
-    └── Add supervisor configuration only when needed
+    └── Add supervisor configuration when supervisor mode is implemented
 
 2. Update agent registry
-    ├── Add capabilities to each registered agent
-    ├── Mark whether an agent may be selected as an execution worker
+    ├── Add capabilities and worker selectability
     ├── Keep Analyze, Planner, and Synthesizer as control agents
     └── Allow Agent of Requirement and future specialist agents as workers
 
 3. Update Registry
-    ├── Return selectable execution agents
-    ├── Return shared-tool descriptions from tool config.json
-    ├── Validate selected agent IDs
-    └── Validate selected tool IDs
+    ├── Return selectable worker-agent catalog
+    ├── Return enriched tool catalog from tool.json and config.json
+    ├── Validate selected agents and tools
+    └── Print all registered agents and tools during application startup
 
-4. Update Analyze Agent
-    ├── Receive the registered execution-agent catalog
-    ├── Receive the registered shared-tool catalog
+4. Add common Agent Factory / Runner
+    ├── Resolve a registered agent ID to its service
+    ├── Create an isolated runtime instance
+    ├── Apply runtime system prompt when supported
+    └── Provide only assigned shared tools
+
+5. Update Analyze Agent
+    ├── Receive worker-agent and shared-tool catalogs
     ├── Analyze objective, constraints, and required capabilities
     ├── Select single or team execution
     └── For single execution:
-        ├── Select exactly one registered execution agent
-        ├── Select zero or more registered shared tools
-        ├── Define its task
-        └── Define its runtime system prompt when required
+        ├── Select exactly one worker agent
+        ├── Define its task and runtime prompt
+        └── Assign zero or more shared tools
 
-5. Update Manager single-agent branch
-    ├── Validate Analyze Agent's selected agent
-    ├── Validate assigned tools
-    ├── Create the selected runtime agent
+6. Update Manager single-agent branch
+    ├── Validate SingleAgentPlan
+    ├── Create the selected worker through Agent Factory
     ├── Execute it
+    ├── Save execution events
     └── Return its result directly
 
-6. Update Planner Agent
-    ├── Receive the analysis
-    ├── Receive selectable registered agents
-    ├── Receive registered shared tools
-    ├── Select worker agents
-    ├── Assign tools to each worker
-    ├── Define tasks and dependencies
+7. Update Planner Agent
+    ├── Receive analysis, worker catalog, tool catalog, and supported patterns
+    ├── Select workers and assign tools
+    ├── Define tasks, runtime prompts, and dependencies
     └── Select sequential, parallel, or supervisor orchestration
 
-7. Add a common agent runner/factory
-    ├── Receive a registered agent ID
-    ├── Load the correct service
-    ├── Create an isolated runtime instance
-    └── Give it only its assigned shared tools
-
 8. Update Orchestrator
-    ├── Execute any selected registered worker agent
-    ├── Keep sequential dependency execution
-    ├── Keep parallel execution for ready independent tasks
+    ├── Execute workers through Agent Factory
+    ├── Support sequential and parallel dependency execution
     ├── Implement supervisor execution
-    ├── Pass dependency outputs between tasks
-    └── Collect outputs, messages, tool results, and failures
+    ├── Pass dependency outputs and team context
+    └── Collect outputs, messages, tool results, events, and failures
 
 9. Update Manager team branch
-    ├── Call Planner Agent
-    ├── Validate TeamPlan
+    ├── Create the team execution session
+    ├── Call Planner and validate TeamPlan
     ├── Call Orchestrator
-    ├── Collect team execution results
-    ├── Call Synthesizer Agent
+    ├── Call Synthesizer with all execution results
     └── Return one final response
 
 10. Complete team communication
     ├── Route direct messages through Orchestrator
-    ├── Route broadcast messages to selected team members
-    ├── Maintain shared team context
-    └── Prevent agents from calling each other directly
+    ├── Route broadcasts to selected team members
+    ├── Maintain shared team context and message history
+    └── Prevent direct agent-to-agent calls
 
 11. Improve session persistence
-    ├── Save analysis
-    ├── Save SingleAgentPlan or TeamPlan
-    ├── Save selected agents and tools
-    ├── Save task outputs and failures
+    ├── Save analysis and SingleAgentPlan or TeamPlan
+    ├── Save selected agents and assigned tools
+    ├── Save status events, outputs, messages, tool results, and failures
     └── Save the final response
 
-12. Add Neo4j integration
-    ├── When run the project (app.py), It will reset and reupdate the entire database
+12. Add execution event API
+    ├── Emit session, analysis, planning, agent-running, tool-running,
+    │   synthesis, completion, and failure events
+    ├── Include active agent ID, task, and assigned tools
+    └── Expose events using WebSocket or Server-Sent Events
+
+13. Add chat GUI
+    ├── Send task messages to the FastAPI backend
+    ├── Display the current execution status
+    ├── For single mode, show the selected agent and assigned tools
+    ├── For team mode, show team members, tasks, and assigned tools
+    ├── Display agent/tool execution events
+    └── Display the final response
+
+14. Add Neo4j integration
+    ├── Reset and rebuild the graph when app.py starts
     ├── Keep agent.json and tool.json as startup configuration
-    ├── Synchronize registered agents and tools into Neo4j
-    ├── Store sessions, tasks, solutions, executions, and relationships
-    ├── Keep file-based session storage as a simple audit log initially
-    └── Later use Neo4j for discovery, history, and execution relationships
+    ├── Synchronize registered agents and tools
+    ├── Store sessions, tasks, plans, executions, and relationships
+    └── Keep file-based session storage as the initial audit log
+```
+
 
 ```
 

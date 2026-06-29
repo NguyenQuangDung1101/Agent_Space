@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 
 
 AgentStatus = Literal[
@@ -119,6 +119,16 @@ class AgentResult(BaseSchema):
 # Analyze Agent schemas
 # ──────────────────────────────────────────────────────────────────────────────
 
+class SingleAgentPlan(BaseSchema):
+    agent_id: str
+    task: str
+    system_prompt: Optional[str] = None
+
+    assigned_tool_ids: List[str] = Field(
+        default_factory=list
+    )
+
+
 class AnalysisResult(BaseSchema):
     objective: str
 
@@ -136,7 +146,16 @@ class AnalysisResult(BaseSchema):
         default_factory=list
     )
 
-    recommended_mode: ExecutionMode
+    # Temporary compatibility with the current Analyze Agent.
+    # Step 4 should make it return "execution_mode" directly.
+    execution_mode: ExecutionMode = Field(
+        validation_alias=AliasChoices(
+            "execution_mode",
+            "recommended_mode",
+        )
+    )
+
+    single_plan: Optional[SingleAgentPlan] = None
     reason: str
 
 
@@ -190,6 +209,7 @@ class ExecutionResult(BaseSchema):
     execution_mode: ExecutionMode
 
     final_answer: Optional[str] = None
+
     agent_results: List[AgentResult] = Field(
         default_factory=list
     )
@@ -206,6 +226,7 @@ class SessionRecord(BaseSchema):
 
     execution_mode: Optional[ExecutionMode] = None
     analysis: Optional[AnalysisResult] = None
+    single_plan: Optional[SingleAgentPlan] = None
     team_plan: Optional[TeamPlan] = None
     final_result: Optional[ExecutionResult] = None
 

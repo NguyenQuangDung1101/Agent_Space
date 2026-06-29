@@ -2,7 +2,13 @@
   {
     "id": "analyze_agent",
     "type": "fixed",
-    "description": "Analyze user requests and extract structured task requirements.",
+    "description": "Analyze user requests and select single-agent or team execution.",
+    "capabilities": [
+      "task_analysis",
+      "requirement_extraction",
+      "execution_mode_selection"
+    ],
+    "selectable_as_worker": false,
     "path": "agent/analyze_agent",
     "prompt_path": "agent/analyze_agent/system_prompt.txt",
     "allowed_callers": [
@@ -13,6 +19,13 @@
     "id": "planner_agent",
     "type": "fixed",
     "description": "Create and organize validated agent team plans.",
+    "capabilities": [
+      "team_planning",
+      "task_decomposition",
+      "dependency_planning",
+      "orchestration_selection"
+    ],
+    "selectable_as_worker": false,
     "path": "agent/planner_agent",
     "prompt_path": "agent/planner_agent/system_prompt.txt",
     "allowed_callers": [
@@ -23,6 +36,12 @@
     "id": "agent_of_requirement",
     "type": "dynamic",
     "description": "Create specialized runtime agents from supplied prompts and tools.",
+    "capabilities": [
+      "general_task_execution",
+      "runtime_specialization",
+      "shared_tool_usage"
+    ],
+    "selectable_as_worker": true,
     "path": "agent/agent_of_requirement",
     "prompt_path": "agent/agent_of_requirement/base_prompt.txt",
     "allowed_callers": [
@@ -34,7 +53,13 @@
   {
     "id": "synthesizer_agent",
     "type": "fixed",
-    "description": "Combine execution results into one final response.",
+    "description": "Combine team execution results into one final response.",
+    "capabilities": [
+      "result_synthesis",
+      "error_review",
+      "final_response_generation"
+    ],
+    "selectable_as_worker": false,
     "path": "agent/synthesizer_agent",
     "prompt_path": "agent/synthesizer_agent/system_prompt.txt",
     "allowed_callers": [
