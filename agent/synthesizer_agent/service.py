@@ -4,10 +4,7 @@ from typing import Optional
 from uuid import uuid4
 
 from agent.synthesizer_agent import builtin_tool
-from share.agent import (
-    ToolCallingAgent,
-    build_strong_system_prompt,
-)
+from share.agent import ToolCallingAgent, build_strong_system_prompt
 from share.local_llm import Copilot
 from share.registry import Registry
 from share.schemas import AgentRequest, AgentResult

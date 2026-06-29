@@ -1,122 +1,240 @@
 import asyncio
-from typing import Any, Optional
+import json
+from typing import Any, Callable, Optional
 
-from agent.agent_of_requirement.service import (
-    AgentOfRequirementService,
-)
+from share.agent_factory import AgentFactory
+from share.registry import Registry
 from share.schemas import (
-    AgentRequest,
     AgentResult,
+    ExecutionEvent,
     ExecutionResult,
+    Message,
     TeamMember,
     TeamPlan,
     TeamTask,
 )
 
 
+EventHandler = Callable[[ExecutionEvent], None]
+
+
 class Orchestrator:
     def __init__(
         self,
-        model: Optional[str] = None,
-        base_url: Optional[str] = None,
+        registry: Optional[Registry] = None,
+        factory: Optional[AgentFactory] = None,
         max_steps: int = 10,
     ) -> None:
-        self.worker = AgentOfRequirementService(
-            model=model,
-            base_url=base_url,
-        )
-
+        self.registry = registry or Registry()
+        self.factory = factory or AgentFactory(registry=self.registry)
         self.max_steps = max_steps
 
-    @staticmethod
-    def _validate_plan(
-        plan: TeamPlan,
-    ) -> None:
-        if plan.orchestration not in {
-            "sequential",
-            "parallel",
-        }:
-            raise ValueError(
-                "Unsupported orchestration mode."
-            )
+    def validate_plan(self, plan: TeamPlan) -> None:
+        if not plan.members or not plan.tasks:
+            raise ValueError("Team plan must contain members and tasks.")
 
-        member_ids = {
-            member.instance_id
-            for member in plan.members
-        }
+        member_ids = [member.instance_id for member in plan.members]
+        task_ids = [task.task_id for task in plan.tasks]
 
-        task_ids = {
-            task.task_id
-            for task in plan.tasks
-        }
+        if len(member_ids) != len(set(member_ids)):
+            raise ValueError("Duplicate member instance IDs.")
+        if len(task_ids) != len(set(task_ids)):
+            raise ValueError("Duplicate task IDs.")
 
-        if len(member_ids) != len(plan.members):
-            raise ValueError(
-                "Duplicate member instance IDs."
-            )
+        self.registry.validate_agent_ids(
+            [member.agent_id for member in plan.members],
+            selectable_only=True,
+        )
 
-        if len(task_ids) != len(plan.tasks):
-            raise ValueError(
-                "Duplicate task IDs."
-            )
+        for member in plan.members:
+            self.registry.validate_tool_ids(member.assigned_tool_ids)
+            if not self.registry.can_call("manager", member.agent_id):
+                raise PermissionError(f"Manager cannot call: {member.agent_id}")
+            agent = self.registry.get_agent(member.agent_id)
+            if agent["type"] == "dynamic" and not member.system_prompt:
+                raise ValueError(
+                    f"Dynamic member requires system_prompt: {member.instance_id}"
+                )
+
+        member_id_set = set(member_ids)
+        task_id_set = set(task_ids)
+        dependencies = {}
 
         for task in plan.tasks:
-            if task.agent_instance_id not in member_ids:
-                raise ValueError(
-                    f"Unknown member: {task.agent_instance_id}"
-                )
+            if task.agent_instance_id not in member_id_set:
+                raise ValueError(f"Unknown member: {task.agent_instance_id}")
+            if not set(task.dependencies) <= task_id_set:
+                raise ValueError(f"Unknown dependency in task: {task.task_id}")
+            if task.task_id in task.dependencies:
+                raise ValueError(f"Task depends on itself: {task.task_id}")
+            dependencies[task.task_id] = set(task.dependencies)
 
-            if not set(task.dependencies) <= task_ids:
-                raise ValueError(
-                    f"Unknown dependency in task: {task.task_id}"
-                )
+        while dependencies:
+            ready = [task_id for task_id, deps in dependencies.items() if not deps]
+            if not ready:
+                raise ValueError("Task dependency cycle detected.")
+            for task_id in ready:
+                dependencies.pop(task_id)
+            for deps in dependencies.values():
+                deps.difference_update(ready)
 
-    async def _run_task(
+        if plan.orchestration == "supervisor":
+            if plan.supervisor is None:
+                raise ValueError("Supervisor configuration is required.")
+            supervisor_id = plan.supervisor.supervisor_instance_id
+            if supervisor_id not in member_id_set:
+                raise ValueError("Unknown supervisor instance ID.")
+            if any(task.agent_instance_id == supervisor_id for task in plan.tasks):
+                raise ValueError("Supervisor must not own execution tasks.")
+        elif plan.supervisor is not None:
+            raise ValueError(
+                "Supervisor configuration is only valid in supervisor mode."
+            )
+
+    @staticmethod
+    def _emit(
+        events: list[ExecutionEvent],
+        handler: Optional[EventHandler],
+        event_type: str,
+        **kwargs: Any,
+    ) -> None:
+        event = ExecutionEvent(event_type=event_type, **kwargs)
+        events.append(event)
+        if handler:
+            handler(event)
+
+    @staticmethod
+    def _parallel_batch(tasks: list[TeamTask]) -> list[TeamTask]:
+        selected = []
+        busy_members = set()
+        for task in tasks:
+            if task.agent_instance_id not in busy_members:
+                selected.append(task)
+                busy_members.add(task.agent_instance_id)
+        return selected
+
+    @staticmethod
+    def _route_messages(
+        result: AgentResult,
+        sender_id: str,
+        member_ids: set[str],
+        inboxes: dict[str, list[Message]],
+        message_history: list[Message],
+    ) -> None:
+        normalized = []
+
+        for message in result.messages:
+            routed = message.model_copy(update={"sender": sender_id})
+            normalized.append(routed)
+            message_history.append(routed)
+
+            if routed.message_type == "direct":
+                if routed.recipient in member_ids and routed.recipient != sender_id:
+                    inboxes[routed.recipient].append(routed)
+            elif routed.message_type == "broadcast":
+                for recipient in member_ids - {sender_id}:
+                    inboxes[recipient].append(
+                        routed.model_copy(update={"recipient": recipient})
+                    )
+
+        result.messages = normalized
+
+    async def _run_member(
         self,
         session_id: str,
         original_request: str,
         member: TeamMember,
-        task: TeamTask,
-        shared_context: dict[str, Any],
-        task_outputs: dict[str, str],
+        task: str,
+        task_id: Optional[str],
+        context: dict[str, Any],
+        dependency_outputs: dict[str, str],
+        inbox: list[Message],
+        members: list[TeamMember],
+        max_steps: int,
     ) -> AgentResult:
-        dependency_outputs = {
-            dependency: task_outputs[dependency]
-            for dependency in task.dependencies
-            if dependency in task_outputs
-        }
-
-        runtime_prompt = (
-            member.system_prompt
-            or (
-                f"You are the {member.role}.\n"
-                f"Responsibility: {member.task}"
-            )
+        runner = self.factory.create(
+            agent_id=member.agent_id,
+            caller_id="manager",
+            assigned_tool_ids=member.assigned_tool_ids,
+            runtime_system_prompt=member.system_prompt,
         )
 
-        result = await self.worker.run(
-            AgentRequest(
-                session_id=session_id,
-                caller_id="manager",
-                task=task.instruction,
-                context={
-                    **shared_context,
-                    "original_request": original_request,
-                    "role": member.role,
-                    "dependency_outputs": dependency_outputs,
-                },
-                assigned_tool_ids=(
-                    member.assigned_tool_ids
-                ),
-                runtime_system_prompt=runtime_prompt,
-                max_steps=self.max_steps,
-            )
+        result = await runner.run(
+            session_id=session_id,
+            task=task,
+            context={
+                **context,
+                "original_request": original_request,
+                "team_role": member.role,
+                "team_task": member.task,
+                "current_task_id": task_id,
+                "dependency_outputs": dependency_outputs,
+                "inbox": [item.model_dump(mode="json") for item in inbox],
+                "team_members": [
+                    {
+                        "instance_id": item.instance_id,
+                        "role": item.role,
+                    }
+                    for item in members
+                ],
+            },
+            max_steps=max_steps,
         )
-
-        # Keep the planned runtime identity in team results.
         result.instance_id = member.instance_id
-
         return result
+
+    async def _choose_supervisor_task(
+        self,
+        session_id: str,
+        original_request: str,
+        supervisor: TeamMember,
+        ready: list[TeamTask],
+        completed: set[str],
+        task_outputs: dict[str, str],
+        context: dict[str, Any],
+        inbox: list[Message],
+        members: list[TeamMember],
+        max_steps: int,
+    ) -> tuple[str, AgentResult]:
+        selection_task = (
+            "Choose exactly one next task from ready_tasks. "
+            "Return only its task_id.\n\n"
+            + json.dumps(
+                {
+                    "ready_tasks": [task.model_dump() for task in ready],
+                    "completed_task_ids": sorted(completed),
+                    "task_outputs": task_outputs,
+                },
+                ensure_ascii=False,
+                default=str,
+            )
+        )
+
+        result = await self._run_member(
+            session_id=session_id,
+            original_request=original_request,
+            member=supervisor,
+            task=selection_task,
+            task_id=None,
+            context=context,
+            dependency_outputs={},
+            inbox=inbox,
+            members=members,
+            max_steps=max_steps,
+        )
+
+        if result.status != "COMPLETED":
+            raise RuntimeError(result.error or "Supervisor execution failed.")
+
+        choice = (result.final_answer or "").strip().strip("`\"'")
+        if choice.startswith("{"):
+            choice = str(json.loads(choice).get("task_id", "")).strip()
+
+        ready_ids = {task.task_id for task in ready}
+        if choice not in ready_ids:
+            raise ValueError(f"Supervisor selected invalid task: {choice}")
+
+        return choice, result
 
     async def execute(
         self,
@@ -124,106 +242,174 @@ class Orchestrator:
         original_request: str,
         plan: TeamPlan,
         context: Optional[dict[str, Any]] = None,
+        max_steps: Optional[int] = None,
+        event_handler: Optional[EventHandler] = None,
     ) -> ExecutionResult:
+        events: list[ExecutionEvent] = []
+        agent_results: list[AgentResult] = []
+        messages: list[Message] = []
+
         try:
-            self._validate_plan(plan)
+            self.validate_plan(plan)
+            members = {member.instance_id: member for member in plan.members}
+            member_ids = set(members)
+            inboxes = {member_id: [] for member_id in member_ids}
+            pending = {task.task_id: task for task in plan.tasks}
+            completed: set[str] = set()
+            task_outputs: dict[str, str] = {}
+            shared_context = dict(context or {})
+            run_steps = max_steps or self.max_steps
+            rounds = 0
+
+            while pending:
+                ready = [
+                    task
+                    for task in plan.tasks
+                    if task.task_id in pending
+                    and set(task.dependencies) <= completed
+                ]
+                if not ready:
+                    raise ValueError(
+                        "No executable tasks remain. The plan may contain a cycle."
+                    )
+
+                if plan.orchestration == "sequential":
+                    batch = ready[:1]
+                elif plan.orchestration == "parallel":
+                    batch = self._parallel_batch(ready)
+                else:
+                    rounds += 1
+                    if rounds > plan.supervisor.max_rounds:
+                        raise RuntimeError("Supervisor exceeded max_rounds.")
+
+                    supervisor_id = plan.supervisor.supervisor_instance_id
+                    supervisor = members[supervisor_id]
+                    supervisor_inbox = list(inboxes[supervisor_id])
+                    inboxes[supervisor_id].clear()
+
+                    choice, supervisor_result = await self._choose_supervisor_task(
+                        session_id=session_id,
+                        original_request=original_request,
+                        supervisor=supervisor,
+                        ready=ready,
+                        completed=completed,
+                        task_outputs=task_outputs,
+                        context={
+                            **shared_context,
+                            "message_history": [
+                                item.model_dump(mode="json") for item in messages
+                            ],
+                        },
+                        inbox=supervisor_inbox,
+                        members=plan.members,
+                        max_steps=run_steps,
+                    )
+                    agent_results.append(supervisor_result)
+                    self._route_messages(
+                        supervisor_result,
+                        supervisor_id,
+                        member_ids,
+                        inboxes,
+                        messages,
+                    )
+                    self._emit(
+                        events,
+                        event_handler,
+                        "supervisor_selected_task",
+                        agent_id=supervisor.agent_id,
+                        instance_id=supervisor_id,
+                        task_id=choice,
+                    )
+                    batch = [pending[choice]]
+
+                executions = []
+                for task in batch:
+                    member = members[task.agent_instance_id]
+                    member_inbox = list(inboxes[member.instance_id])
+                    inboxes[member.instance_id].clear()
+                    dependency_outputs = {
+                        dependency: task_outputs[dependency]
+                        for dependency in task.dependencies
+                    }
+
+                    self._emit(
+                        events,
+                        event_handler,
+                        "agent_running",
+                        agent_id=member.agent_id,
+                        instance_id=member.instance_id,
+                        task_id=task.task_id,
+                        details={"assigned_tool_ids": member.assigned_tool_ids},
+                    )
+
+                    executions.append(
+                        self._run_member(
+                            session_id=session_id,
+                            original_request=original_request,
+                            member=member,
+                            task=task.instruction,
+                            task_id=task.task_id,
+                            context={
+                                **shared_context,
+                                "message_history": [
+                                    item.model_dump(mode="json") for item in messages
+                                ],
+                                "completed_task_outputs": dict(task_outputs),
+                            },
+                            dependency_outputs=dependency_outputs,
+                            inbox=member_inbox,
+                            members=plan.members,
+                            max_steps=run_steps,
+                        )
+                    )
+
+                results = await asyncio.gather(*executions)
+
+                for task, result in zip(batch, results):
+                    member = members[task.agent_instance_id]
+                    agent_results.append(result)
+                    self._route_messages(
+                        result,
+                        member.instance_id,
+                        member_ids,
+                        inboxes,
+                        messages,
+                    )
+
+                    self._emit(
+                        events,
+                        event_handler,
+                        "agent_completed" if result.status == "COMPLETED" else "agent_failed",
+                        agent_id=member.agent_id,
+                        instance_id=member.instance_id,
+                        task_id=task.task_id,
+                    )
+
+                    if result.status != "COMPLETED":
+                        raise RuntimeError(
+                            result.error or f"Task failed: {task.task_id}"
+                        )
+
+                    task_outputs[task.task_id] = result.final_answer or ""
+                    completed.add(task.task_id)
+                    pending.pop(task.task_id)
+
+            return ExecutionResult(
+                session_id=session_id,
+                status="COMPLETED",
+                execution_mode="team",
+                agent_results=agent_results,
+                messages=messages,
+                events=events,
+            )
+
         except Exception as error:
             return ExecutionResult(
                 session_id=session_id,
                 status="FAILED",
                 execution_mode="team",
-                errors=[
-                    f"{type(error).__name__}: {error}"
-                ],
+                agent_results=agent_results,
+                messages=messages,
+                events=events,
+                errors=[f"{type(error).__name__}: {error}"],
             )
-
-        context = context or {}
-
-        members = {
-            member.instance_id: member
-            for member in plan.members
-        }
-
-        pending = {
-            task.task_id: task
-            for task in plan.tasks
-        }
-
-        completed: set[str] = set()
-        task_outputs: dict[str, str] = {}
-        agent_results: list[AgentResult] = []
-
-        while pending:
-            ready = [
-                task
-                for task in plan.tasks
-                if (
-                    task.task_id in pending
-                    and set(task.dependencies) <= completed
-                )
-            ]
-
-            if not ready:
-                return ExecutionResult(
-                    session_id=session_id,
-                    status="FAILED",
-                    execution_mode="team",
-                    agent_results=agent_results,
-                    errors=[
-                        "No executable tasks remain. "
-                        "The plan may contain a dependency cycle."
-                    ],
-                )
-
-            if plan.orchestration == "sequential":
-                ready = ready[:1]
-
-            executions = [
-                self._run_task(
-                    session_id=session_id,
-                    original_request=original_request,
-                    member=members[
-                        task.agent_instance_id
-                    ],
-                    task=task,
-                    shared_context=context,
-                    task_outputs=task_outputs,
-                )
-                for task in ready
-            ]
-
-            results = await asyncio.gather(
-                *executions
-            )
-
-            for task, result in zip(
-                ready,
-                results,
-            ):
-                agent_results.append(result)
-
-                if result.status != "COMPLETED":
-                    return ExecutionResult(
-                        session_id=session_id,
-                        status="FAILED",
-                        execution_mode="team",
-                        agent_results=agent_results,
-                        errors=[
-                            result.error
-                            or f"Task failed: {task.task_id}"
-                        ],
-                    )
-
-                task_outputs[task.task_id] = (
-                    result.final_answer or ""
-                )
-
-                completed.add(task.task_id)
-                pending.pop(task.task_id)
-
-        return ExecutionResult(
-            session_id=session_id,
-            status="COMPLETED",
-            execution_mode="team",
-            agent_results=agent_results,
-        )
