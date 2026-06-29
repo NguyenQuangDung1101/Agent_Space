@@ -16,368 +16,405 @@ curl -X POST "http://127.0.0.1:8002/run" ^
 
 
 
-## IMPLEMENTATION STRATEGY
-
 ```text
 CURRENT STATE
-    Single-agent execution works using Agent of Requirement (suppose to be any registered agent that choosen by analyser agent)
-    Planner, Orchestrator, and Synthesizer exist but are not connected to the Manager's complete execution flow.
-    Sequential and parallel scheduling exist.
-    Supervisor orchestration are not implemented.
-    Neo4j graph database are not applied.
-    Not cosistent and not match the requirement accross the repo
+    Single/team execution, session persistence, SSE events, and chat GUI are implemented.
+    Each user message creates an independent session.
+    Conversation memory, pause/resume user contact, Knowledge agents, and Neo4j persistence are not implemented.
 
 NEXT IMPLEMENTATION STEPS
 
+1. Add Conversation layer
+    ├── Create Conversation, Message, and ConversationMemory schemas
+    ├── Store sessions inside their parent conversation
+    ├── Add conversation and message APIs
+    └── Load shared conversation memory into new sessions
+
+2. Add user-contact pause/resume
+    ├── Add UserContactRequest schema and WAITING_FOR_USER status
+    ├── Allow agents to raise free-text questions for the user
+    ├── Save a resumable agent/session checkpoint
+    └── Resume the same session after the user replies
+
+3. Update Manager and Orchestrator
+    ├── Distinguish new task messages from user-contact replies
+    ├── Pause the whole team while waiting for user input
+    ├── Resume the requesting agent with the user's response
+    └── Update conversation memory after session completion
+
+4. Add Knowledge Graph Import Agent
+    ├── Analyze documents and create an ImportPlan
+    ├── Request user review before importing
+    ├── Import approved data using private built-in tools
+    └── Return validation results and failures
+
+5. Add Neo4j Traversal Agent
+    ├── Find anchor nodes
+    ├── Perform bounded k-hop and path traversal
+    ├── Retrieve relevant subgraphs
+    └── Use only private Neo4j traversal tools
+
+6. Add Neo4j integration
+    ├── Reset and rebuild Agent Space data when app.py starts
+    ├── Synchronize registered agents and shared tools
+    ├── Store conversations, sessions, plans, executions, and contacts
+    ├── Keep the external Knowledge graph as a separate graph domain
+    └── Keep file storage as the audit log
+
+7. Update GUI and execution events
+    ├── Create and select conversations
+    ├── Display connected chat history
+    ├── Display user-contact questions and accept free-text replies
+    └── Show paused, resumed, completed, and failed session states
+
+8. Validate the complete flow
+    ├── Multi-session conversation memory
+    ├── Single/team pause and resume
+    ├── Knowledge import approval
+    ├── Knowledge graph retrieval
+    └── File and Neo4j persistence consistency
+```
+
+
+# UPDATED AGENT SPACE REQUIREMENT
+
+## 1. Core entities
+
 ```text
-1. Update shared schemas
-    ├── Add SingleAgentPlan:
-    │   ├── agent_id
-    │   ├── task
-    │   ├── system_prompt
-    │   └── assigned_tool_ids
-    ├── Update AnalysisResult:
-    │   ├── execution_mode: single | team
-    │   └── single_plan: SingleAgentPlan | null
-    ├── Keep TeamPlan for Planner output
-    └── Add supervisor configuration when supervisor mode is implemented
+Conversation
+    ├── Contains multiple user/assistant messages
+    ├── Contains multiple execution Sessions
+    ├── Stores shared conversation memory
+    └── Must be created before sending tasks
 
-2. Update agent registry
-    ├── Add capabilities and worker selectability
-    ├── Keep Analyze, Planner, and Synthesizer as control agents
-    └── Allow Agent of Requirement and future specialist agents as workers
+Session
+    ├── Represents one user task execution
+    ├── Belongs to exactly one Conversation
+    ├── Contains analysis, plan, executions, events, and final response
+    └── May pause and resume when waiting for user input
 
-3. Update Registry
-    ├── Return selectable worker-agent catalog
-    ├── Return enriched tool catalog from tool.json and config.json
-    ├── Validate selected agents and tools
-    └── Print all registered agents and tools during application startup
+Message
+    ├── Belongs to a Conversation
+    ├── May trigger a new Session
+    ├── May answer a pending UserContactRequest
+    └── May contain document attachments
 
-4. Add common Agent Factory / Runner
-    ├── Resolve a registered agent ID to its service
-    ├── Create an isolated runtime instance
-    ├── Apply runtime system prompt when supported
-    └── Provide only assigned shared tools
-
-5. Update Analyze Agent
-    ├── Receive worker-agent and shared-tool catalogs
-    ├── Analyze objective, constraints, and required capabilities
-    ├── Select single or team execution
-    └── For single execution:
-        ├── Select exactly one worker agent
-        ├── Define its task and runtime prompt
-        └── Assign zero or more shared tools
-
-6. Update Manager single-agent branch
-    ├── Validate SingleAgentPlan
-    ├── Create the selected worker through Agent Factory
-    ├── Execute it
-    ├── Save execution events
-    └── Return its result directly
-
-7. Update Planner Agent
-    ├── Receive analysis, worker catalog, tool catalog, and supported patterns
-    ├── Select workers and assign tools
-    ├── Define tasks, runtime prompts, and dependencies
-    └── Select sequential, parallel, or supervisor orchestration
-
-8. Update Orchestrator
-    ├── Execute workers through Agent Factory
-    ├── Support sequential and parallel dependency execution
-    ├── Implement supervisor execution
-    ├── Pass dependency outputs and team context
-    └── Collect outputs, messages, tool results, events, and failures
-
-9. Update Manager team branch
-    ├── Create the team execution session
-    ├── Call Planner and validate TeamPlan
-    ├── Call Orchestrator
-    ├── Call Synthesizer with all execution results
-    └── Return one final response
-
-10. Complete team communication
-    ├── Route direct messages through Orchestrator
-    ├── Route broadcasts to selected team members
-    ├── Maintain shared team context and message history
-    └── Prevent direct agent-to-agent calls
-
-11. Improve session persistence
-    ├── Save analysis and SingleAgentPlan or TeamPlan
-    ├── Save selected agents and assigned tools
-    ├── Save status events, outputs, messages, tool results, and failures
-    └── Save the final response
-
-12. Add execution event API
-    ├── Emit session, analysis, planning, agent-running, tool-running,
-    │   synthesis, completion, and failure events
-    ├── Include active agent ID, task, and assigned tools
-    └── Expose events using WebSocket or Server-Sent Events
-
-13. Add chat GUI
-    ├── Send task messages to the FastAPI backend
-    ├── Display the current execution status
-    ├── For single mode, show the selected agent and assigned tools
-    ├── For team mode, show team members, tasks, and assigned tools
-    ├── Display agent/tool execution events
-    └── Display the final response
-
-14. Add Neo4j integration
-    ├── Reset and rebuild the graph when app.py starts
-    ├── Keep agent.json and tool.json as startup configuration
-    ├── Synchronize registered agents and tools
-    ├── Store sessions, tasks, plans, executions, and relationships
-    └── Keep file-based session storage as the initial audit log
+ConversationMemory
+    ├── Stores a compact summary of previous sessions
+    ├── Includes important user requests, decisions, plans, and responses
+    └── Is provided as context to new sessions
 ```
 
+A normal user message creates a new Session.
 
-```
+A message answering a pending user-contact request resumes the existing Session instead of creating another Session.
 
-## UPDATED AGENT SPACE REQUIREMENT
+---
 
-### 1. Project structure
+## 2. Project structure
 
 ```text
 AGENT_SPACE/
 │
 ├── app.py
-│   # FastAPI entry point. Receives tasks and calls the Manager.
+│   # FastAPI entry point for conversations, messages, sessions,
+│   # attachments, events, and GUI.
 │
 ├── requirements.txt
-│   # Python dependencies.
+│
+├── gui/
+│   └── index.html
+│       # Conversation-based chat GUI with session status,
+│       # agent assignments, user-contact requests, and final responses.
 │
 ├── agent/
 │   ├── agent.json
-│   │   # Agent registry containing agent identity, type, description,
-│   │   # capabilities, paths, caller permissions, and worker selectability.
+│   │   # Registry for control agents and selectable worker agents.
 │   │
-│   ├── analyze_agent/  # Receive request from user, analyze and decide whether to form team or not (if form team then choose a specific agent (in registered list) and suitable tool if needed)
+│   ├── analyze_agent/
 │   │   ├── service.py
-│   │   │   # Analyzes the task and selects single or team execution.
-│   │   │   # For single execution, also selects one registered worker agent
-│   │   │   # and its assigned shared tools.
 │   │   ├── server.py
-│   │   │   # HTTP wrapper for Analyze Agent service.
 │   │   ├── system_prompt.txt
-│   │   │   # Analysis and execution-selection instructions.
 │   │   └── builtin_tool.py
-│   │       # Private Analyze Agent tools; may be empty.
 │   │
-│   ├── planner_agent/  # A default team member, decide which agent (from registered list) with what tool (from registered list) become team member, also team pattern to process the task
+│   ├── planner_agent/
 │   │   ├── service.py
-│   │   │   # Creates a TeamPlan from registered agents and shared tools.
 │   │   ├── server.py
-│   │   │   # HTTP wrapper for Planner Agent service.
 │   │   ├── system_prompt.txt
-│   │   │   # Team formation, tool assignment, dependency,
-│   │   │   # and orchestration-selection instructions.
 │   │   └── builtin_tool.py
-│   │       # Private Planner Agent tools; may be empty.
 │   │
-│   ├── agent_of_requirement/   # Agent empty general agent, call by analyser or planner, use the system prompt and tool given by caller to solve task
+│   ├── agent_of_requirement/
 │   │   ├── service.py
-│   │   │   # General dynamic worker-agent implementation.
 │   │   ├── server.py
-│   │   │   # HTTP wrapper for Agent of Requirement service.
 │   │   ├── base_prompt.txt
-│   │   │   # Base rules combined with a runtime specialized prompt.
 │   │   └── builtin_tool.py
-│   │       # Private tools available to all dynamic worker instances;
-│   │       # initially empty.
 │   │
-│   └── synthesizer_agent/  # A default team member, check result of team member and give the final response to user
+│   ├── synthesizer_agent/
+│   │   ├── service.py
+│   │   ├── server.py
+│   │   ├── system_prompt.txt
+│   │   └── builtin_tool.py
+│   │
+│   ├── knowledge_graph_import_agent/
+│   │   ├── service.py
+│   │   │   # Analyzes documents, creates an import plan,
+│   │   │   requests user review, and imports approved data.
+│   │   ├── server.py
+│   │   ├── system_prompt.txt
+│   │   └── builtin_tool.py
+│   │       # Private document parsing, normalization, validation,
+│   │       # and Knowledge graph import tools.
+│   │
+│   └── neo4j_traversal_agent/
 │       ├── service.py
-│       │   # Combines team execution results into the final response.
+│       │   # Retrieves external knowledge from Neo4j.
 │       ├── server.py
-│       │   # HTTP wrapper for Synthesizer Agent service.
 │       ├── system_prompt.txt
-│       │   # Result synthesis and factuality instructions.
 │       └── builtin_tool.py
-│           # Private Synthesizer Agent tools; may be empty.
+│           # Private tools such as anchor search, k-hop expansion,
+│           # path search, and subgraph retrieval.
 │
 ├── tool/
 │   ├── tool.json
-│   │   # Minimal shared-tool registry containing tool IDs and folder paths.
-│   │
 │   └── get_current_datetime/
 │       ├── config.json
-│       │   # Tool name, description, and input schema.
 │       └── tool.py
-│           # Deterministic tool implementation exposing run(arguments).
 │
 ├── share/
 │   ├── local_llm.py
-│   │   # Ollama-compatible LLM client.
-│   │
 │   ├── agent.py
-│   │   # Generic agent runtime handling inference, history,
-│   │   # tool calls, communication, and final answers.
-│   │
+│   │   # Generic runtime supporting tools, messages, final answers,
+│   │   # user-contact requests, pause, and resume.
 │   ├── schemas.py
-│   │   # Shared models such as AnalysisResult, SingleAgentPlan,
-│   │   # TeamPlan, AgentRequest, AgentResult, and ExecutionResult.
-│   │
+│   │   # Conversation, Message, Session, UserContactRequest,
+│   │   # AnalysisResult, plans, executions, and events.
 │   ├── registry.py
-│   │   # Loads agent and tool registries and validates selections.
-│   │
 │   ├── tool_loader.py
-│   │   # Loads and executes only the shared tools assigned to an agent.
-│   │
-│   └── agent_factory.py
-│       # Creates or resolves the registered worker agent selected
-│       # by Analyze Agent or Planner Agent.
+│   ├── agent_factory.py
+│   ├── event_broker.py
+│   └── conversation_store.py
+│       # Saves conversation messages, memory, attachments,
+│       # session artifacts, and resumable checkpoints.
 │
 ├── core/
 │   ├── manager.py
-│   │   # Creates sessions, calls control agents, validates decisions,
-│   │   # selects the execution branch, and saves the final result.
-│   │
+│   │   # Controls conversation sessions, execution branches,
+│   │   # user-contact pause/resume, and persistence.
 │   └── orchestrator.py
-│       # Executes validated sequential, parallel, or supervisor TeamPlans
-│       # and routes team context and communication.
+│       # Executes teams, routes agent messages, manages shared context,
+│       # and pauses the session when a worker contacts the user.
 │
 ├── database/
 │   ├── neo4j_repository.py
-│   │   # Reads and writes Agent Space entities and relationships in Neo4j.
-│   │
-│   └── schema.cypher
-│       # Constraints, indexes, and initial graph structure.
+│   │   # Main Agent Space graph persistence.
+│   ├── knowledge_repository.py
+│   │   # Low-level access to the separate external Knowledge graph.
+│   ├── schema.cypher
+│   │   # Main Agent Space constraints and indexes.
+│   └── knowledge_schema.cypher
+│       # External Knowledge graph constraints and indexes.
 │
 └── data/
-    └── sessions/
-        # File-based session requests, plans, events, outputs, and results.
+    └── conversations/
+        └── {conversation_id}/
+            ├── conversation.json
+            ├── messages.json
+            ├── memory.json
+            ├── attachments/
+            └── sessions/
+                └── {session_id}/
+                    ├── request.json
+                    ├── analysis.json
+                    ├── single_plan.json or team_plan.json
+                    ├── assignments.json
+                    ├── events.json
+                    ├── outputs.json
+                    ├── messages.json
+                    ├── tool_results.json
+                    ├── failures.json
+                    ├── checkpoint.json
+                    ├── final_response.json
+                    └── session.json
 ```
 
-### 2. Main execution flow
+The two Knowledge agents are selectable specialist workers.
+
+Their built-in tools are private and are not registered in `tool/tool.json` or assigned by Planner.
+
+---
+
+## 3. Conversation and session flow
 
 ```text
-Receive user task
+Create Conversation
     ↓
-Manager creates session
-    ├── Generate session ID
-    ├── Save original request
-    └── Set status to RUNNING
+User sends message
     ↓
-Manager loads catalogs
-    ├── Registered execution agents from agent.json
-    └── Registered shared tools from tool.json and config.json
+Manager saves message to Conversation
     ↓
-Call Analyze Agent
-    ├── Identify objective and constraints
-    ├── Determine required capabilities
-    ├── Detect missing information
-    └── Select execution solution
-        ├── Single-agent solution
-        └── Team solution
+If message answers a pending UserContactRequest:
+    Resume the existing Session
+Else:
+    Create a new Session
     ↓
-Manager validates Analyze Agent output
+Load ConversationMemory
+    ↓
+Analyze Agent
+    ├── Single execution
+    └── Team execution
+    ↓
+Execute selected solution
+    ↓
+Save final response as an assistant message
+    ↓
+Update ConversationMemory
 ```
 
-#### Single-agent solution
+The detailed analysis, team formation, tool results, and execution events stay inside the Session.
+
+Conversation memory stores only the useful shared summary needed by later tasks.
+
+---
+
+## 4. User-contact flow
+
+User contact must be separate from direct or broadcast team communication because it pauses execution.
+
+An agent may emit:
 
 ```text
-Analyze Agent selects:
-    ├── One registered execution agent with tool (from registered tool list, not builtin tool of the agent) if needed
-    ├── Agent task
-    ├── Runtime system prompt when required
-    └── Zero or more registered shared tools
-    ↓
-Manager validates:
-    ├── Agent exists and is selectable
-    ├── Tools exist
-    ├── Agent call permission
-    └── Runtime prompt requirements
-    ↓
-Agent Factory creates the selected runtime agent
-    ↓
-Tool Loader provides only assigned shared tools
-    ↓
-Execute selected agent
-    ↓
-Return its result directly
+<user_contact>
+{
+  "question": "Please review the proposed import mapping.",
+  "reason": "Confirmation is required before modifying the Knowledge graph.",
+  "expected_response": "Free-text review or approval"
+}
+</user_contact>
 ```
 
-#### Team solution
+Flow:
 
 ```text
-Manager starts the team execution pipeline
-    ├── Planner Agent
-    ├── Worker team
-    └── Synthesizer Agent
+Agent raises UserContactRequest
     ↓
-Planner receives:
-    ├── Analyzed task
-    ├── Registered execution-agent catalog
-    ├── Registered shared-tool catalog
-    └── Supported orchestration patterns
+Orchestrator sends it to Manager
     ↓
-Planner creates TeamPlan
-    ├── Select registered worker agents
-    ├── Define runtime roles and tasks
-    ├── Assign zero or more shared tools to each worker (in registered tool list)
-    ├── Define task dependencies
-    └── Select orchestration:
-        ├── Sequential
-        ├── Parallel
-        └── Supervisor
+Session status becomes WAITING_FOR_USER
     ↓
-Manager validates TeamPlan
-    ├── Agent and tool IDs
-    ├── Worker selectability
-    ├── Task-member references
-    ├── Dependencies and cycles
-    ├── Runtime prompts
-    └── Orchestration pattern
+Save active agent state and checkpoint
     ↓
-Orchestrator creates isolated worker instances
+Emit user_contact_requested event
     ↓
-Orchestrator executes TeamPlan
-    ├── Sequential:
-    │   Run ready tasks one at a time in dependency order
-    ├── Parallel:
-    │   Run independent ready tasks concurrently
-    └── Supervisor:
-        Supervisor chooses the next validated worker and task
+GUI displays the agent's question
     ↓
-Orchestrator manages:
-    ├── Dependency outputs
-    ├── Direct messages
-    ├── Broadcast messages
-    ├── Shared team context
-    ├── Tool results
-    └── Failures
+User sends a free-text response
     ↓
-Synthesizer receives:
-    ├── Original task
-    ├── AnalysisResult
-    ├── TeamPlan
-    ├── Worker outputs
-    └── Errors and tool results
+Response is linked to the contact request
     ↓
-Synthesizer produces one final response
+Session status returns to RUNNING
+    ↓
+Resume the same agent instance and task
 ```
 
-#### Persistence
+The user may respond naturally, for example:
 
 ```text
-Execution result
-    ↓
-Save session files
-    ├── Request
-    ├── AnalysisResult
-    ├── SingleAgentPlan or TeamPlan
-    ├── Agent and tool assignments
-    ├── Execution events
-    └── Final response
-    ↓
-Persist graph relationships in Neo4j
-    ├── System -[:REGISTERS]-> Agent
-    ├── System -[:REGISTERS]-> Tool
-    ├── System -[:RECEIVES]-> Task
-    ├── Session -[:HAS_TASK]-> Task
-    ├── Task -[:SOLVED_BY]-> Solution
-    ├── SingleSolution -[:USES_AGENT]-> Agent
-    ├── TeamSolution -[:USES_AGENT]-> Agent
-    └── Solution -[:USES_TOOL]-> Tool
-    ↓
-Set session status to COMPLETED or FAILED
+The plan is acceptable, but merge duplicate company nodes before importing.
 ```
+
+The agent may continue, revise its plan, or raise another user-contact request.
+
+For team execution, the whole Session pauses while waiting for the user.
+
+---
+
+## 5. Graph data model
+
+Two graph domains exist in the same Neo4j database.
+
+### Agent Space domain
+
+```text
+(System)-[:REGISTERS]->(Agent)
+(System)-[:REGISTERS]->(Tool)
+
+(Conversation)-[:HAS_MESSAGE]->(Message)
+(Conversation)-[:HAS_SESSION]->(Session)
+(Conversation)-[:HAS_MEMORY]->(MemorySnapshot)
+
+(Session)-[:TRIGGERED_BY]->(Message)
+(Session)-[:HAS_TASK]->(Task)
+(Session)-[:HAS_ANALYSIS]->(Analysis)
+(Task)-[:SOLVED_BY]->(Solution)
+
+(Solution)-[:USES_AGENT]->(Agent)
+(Solution)-[:USES_TOOL]->(Tool)
+
+(Session)-[:HAS_EXECUTION]->(Execution)
+(Execution)-[:HAS_AGENT_RUN]->(AgentRun)
+(AgentRun)-[:INSTANCE_OF]->(Agent)
+(AgentRun)-[:HAS_TOOL_RUN]->(ToolRun)
+
+(Session)-[:HAS_CONTACT]->(UserContact)
+(UserContact)-[:REQUESTED_BY]->(AgentRun)
+(UserContact)-[:ANSWERED_BY]->(Message)
+```
+
+### External Knowledge domain
+
+```text
+(Knowledge {id: "external_knowledge"})
+    -[:HAS_DOCUMENT]->(KnowledgeDocument)
+
+(KnowledgeDocument)-[:HAS_CHUNK]->(KnowledgeChunk)
+(Knowledge)-[:HAS_ENTITY]->(KnowledgeEntity)
+
+(KnowledgeChunk)-[:MENTIONS]->(KnowledgeEntity)
+(KnowledgeEntity)-[:RELATED_TO]->(KnowledgeEntity)
+(KnowledgeEntity)-[:SUPPORTED_BY]->(KnowledgeChunk)
+```
+
+The main Agent Space repository must ignore the external Knowledge domain during normal system discovery and execution queries.
+
+Only explicit Knowledge agents access it.
+
+Optional provenance links may connect the domains:
+
+```text
+(AgentRun)-[:IMPORTED]->(KnowledgeDocument)
+(AgentRun)-[:RETRIEVED_FROM]->(KnowledgeEntity)
+```
+
+These links record provenance but do not make external knowledge part of the normal Agent Space control graph.
+
+---
+
+## 6. Required session statuses and events
+
+```text
+Session statuses:
+    PENDING
+    RUNNING
+    WAITING_FOR_USER
+    COMPLETED
+    FAILED
+
+Additional events:
+    conversation_created
+    message_received
+    session_started
+    analysis_started
+    analysis_completed
+    planning_started
+    planning_completed
+    agent_running
+    tool_running
+    user_contact_requested
+    user_contact_answered
+    session_resumed
+    synthesis_started
+    session_completed
+    session_failed
+```
+
+A Session is completed only after its final response is saved and added to the Conversation.
