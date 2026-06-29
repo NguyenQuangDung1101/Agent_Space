@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
 
 from share.local_llm import Copilot
+from share.schemas import ExecutionEvent
 
 
 logger = logging.getLogger(__name__)
@@ -170,6 +171,7 @@ class ToolCallingAgent:
         system_prompt: str,
         tool_executor: Optional[Handler] = None,
         communication_handler: Optional[Handler] = None,
+        event_handler: Optional[Handler] = None,
         agent_id: str = "agent",
         instance_id: Optional[str] = None,
         max_steps: int = 6,
@@ -197,6 +199,7 @@ class ToolCallingAgent:
 
         self.tool_executor = tool_executor
         self.communication_handler = communication_handler
+        self.event_handler = event_handler
 
         self.agent_id = agent_id
         self.instance_id = instance_id or agent_id
@@ -410,6 +413,24 @@ class ToolCallingAgent:
 
         return result
 
+    async def _emit_event(
+        self,
+        event_type: str,
+        details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        if self.event_handler is None:
+            return
+
+        await self._invoke(
+            self.event_handler,
+            ExecutionEvent(
+                event_type=event_type,
+                agent_id=self.agent_id,
+                instance_id=self.instance_id,
+                details=details or {},
+            ),
+        )
+
     # ──────────────────────────────────────────────────────────────────────────
     # Tool execution
     # ──────────────────────────────────────────────────────────────────────────
@@ -422,18 +443,34 @@ class ToolCallingAgent:
         arguments = call.get("arguments", {}) or {}
 
         if not isinstance(arguments, dict):
+            error = "Tool arguments must be a JSON object."
             self.conversation.append(
-                f"[TOOL:{name}:ERROR]\n"
-                "Tool arguments must be a JSON object."
+                f"[TOOL:{name}:ERROR]\n{error}"
+            )
+            await self._emit_event(
+                "tool_failed",
+                {"tool_name": name, "error": error},
             )
             return
 
         if self.tool_executor is None:
+            error = "No tool executor is configured."
             self.conversation.append(
-                f"[TOOL:{name}:ERROR]\n"
-                "No tool executor is configured."
+                f"[TOOL:{name}:ERROR]\n{error}"
+            )
+            await self._emit_event(
+                "tool_failed",
+                {"tool_name": name, "error": error},
             )
             return
+
+        await self._emit_event(
+            "tool_running",
+            {
+                "tool_name": name,
+                "arguments": arguments,
+            },
+        )
 
         try:
             result = await self._invoke(
@@ -447,6 +484,25 @@ class ToolCallingAgent:
                 f"{self._format_result(result)}"
             )
 
+            success = True
+            error_text = None
+
+            if hasattr(result, "success"):
+                success = bool(result.success)
+                error_text = getattr(result, "error", None)
+            elif isinstance(result, dict) and "success" in result:
+                success = bool(result.get("success"))
+                error_text = result.get("error")
+
+            await self._emit_event(
+                "tool_completed" if success else "tool_failed",
+                {
+                    "tool_name": name,
+                    "success": success,
+                    "error": error_text,
+                },
+            )
+
         except Exception as error:
             logger.exception(
                 "Tool execution failed: %s",
@@ -456,6 +512,14 @@ class ToolCallingAgent:
             self.conversation.append(
                 f"[TOOL:{name}:ERROR]\n"
                 f"{type(error).__name__}: {error}"
+            )
+
+            await self._emit_event(
+                "tool_failed",
+                {
+                    "tool_name": name,
+                    "error": f"{type(error).__name__}: {error}",
+                },
             )
 
     # ──────────────────────────────────────────────────────────────────────────
@@ -742,6 +806,7 @@ def build_agent(
     tool_spec: Optional[List[Dict[str, Any]]] = None,
     tool_executor: Optional[Handler] = None,
     communication_handler: Optional[Handler] = None,
+    event_handler: Optional[Handler] = None,
     agent_id: str = "agent",
     instance_id: Optional[str] = None,
     max_steps: int = 24,
@@ -771,6 +836,7 @@ def build_agent(
         system_prompt=system_prompt,
         tool_executor=tool_executor,
         communication_handler=communication_handler,
+        event_handler=event_handler,
         agent_id=agent_id,
         instance_id=instance_id,
         max_steps=max_steps,

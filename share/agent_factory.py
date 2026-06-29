@@ -1,10 +1,14 @@
 from __future__ import annotations
 
 import importlib
-from typing import Any, Optional
+import inspect
+from typing import Any, Callable, Optional
 
 from share.registry import Registry
-from share.schemas import AgentRequest, AgentResult
+from share.schemas import AgentRequest, AgentResult, ExecutionEvent
+
+
+EventHandler = Callable[[ExecutionEvent], Any]
 
 
 class AgentRunner:
@@ -28,20 +32,26 @@ class AgentRunner:
         task: str,
         context: Optional[dict[str, Any]] = None,
         max_steps: int = 10,
+        event_handler: Optional[EventHandler] = None,
     ) -> AgentResult:
-        return await self.service.run(
-            AgentRequest(
-                session_id=session_id,
-                caller_id=self.caller_id,
-                task=task,
-                context=context or {},
-                assigned_tool_ids=self.assigned_tool_ids,
-                runtime_system_prompt=(
-                    self.runtime_system_prompt
-                ),
-                max_steps=max_steps,
-            )
+        request = AgentRequest(
+            session_id=session_id,
+            caller_id=self.caller_id,
+            task=task,
+            context=context or {},
+            assigned_tool_ids=self.assigned_tool_ids,
+            runtime_system_prompt=self.runtime_system_prompt,
+            max_steps=max_steps,
         )
+
+        parameters = inspect.signature(self.service.run).parameters
+        if "event_handler" in parameters:
+            return await self.service.run(
+                request,
+                event_handler=event_handler,
+            )
+
+        return await self.service.run(request)
 
 
 class AgentFactory:
@@ -56,9 +66,7 @@ class AgentFactory:
         self.base_url = base_url
 
     @staticmethod
-    def _service_class_name(
-        agent_id: str,
-    ) -> str:
+    def _service_class_name(agent_id: str) -> str:
         return "".join(
             part.capitalize()
             for part in agent_id.split("_")
@@ -74,20 +82,11 @@ class AgentFactory:
             .strip("/")
             .split("/")
         )
-
         module = importlib.import_module(
             f"{module_path}.service"
         )
-
-        class_name = self._service_class_name(
-            agent["id"]
-        )
-
-        service_class = getattr(
-            module,
-            class_name,
-            None,
-        )
+        class_name = self._service_class_name(agent["id"])
+        service_class = getattr(module, class_name, None)
 
         if service_class is None:
             raise ImportError(
@@ -111,30 +110,18 @@ class AgentFactory:
                 f"Agent '{agent_id}' is not a selectable worker."
             )
 
-        if not self.registry.can_call(
-            caller_id,
-            agent_id,
-        ):
+        if not self.registry.can_call(caller_id, agent_id):
             raise PermissionError(
                 f"'{caller_id}' cannot call '{agent_id}'."
             )
 
-        tool_ids = list(
-            dict.fromkeys(assigned_tool_ids or [])
-        )
-
-        self.registry.validate_tool_ids(
-            tool_ids
-        )
+        tool_ids = list(dict.fromkeys(assigned_tool_ids or []))
+        self.registry.validate_tool_ids(tool_ids)
 
         for tool_id in tool_ids:
-            if not self.registry.can_assign_tool(
-                caller_id,
-                tool_id,
-            ):
+            if not self.registry.can_assign_tool(caller_id, tool_id):
                 raise PermissionError(
-                    f"'{caller_id}' cannot assign "
-                    f"tool '{tool_id}'."
+                    f"'{caller_id}' cannot assign tool '{tool_id}'."
                 )
 
         if (
@@ -145,22 +132,16 @@ class AgentFactory:
             )
         ):
             raise ValueError(
-                f"Agent '{agent_id}' requires a "
-                "runtime system prompt."
+                f"Agent '{agent_id}' requires a runtime system prompt."
             )
 
-        service_class = self._load_service_class(
-            agent
-        )
-
+        service_class = self._load_service_class(agent)
         service = service_class(
             model=self.model,
             base_url=self.base_url,
         )
 
-        if not callable(
-            getattr(service, "run", None)
-        ):
+        if not callable(getattr(service, "run", None)):
             raise TypeError(
                 f"Agent service '{agent_id}' must define "
                 "an async run(request) method."

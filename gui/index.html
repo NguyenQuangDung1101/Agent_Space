@@ -1,0 +1,643 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <link rel="icon" href="data:,">
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Agent Space</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      font-family: Inter, ui-sans-serif, system-ui, sans-serif;
+      background: #0b1020;
+      color: #e8ecf4;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      background: #0b1020;
+    }
+
+    header {
+      height: 64px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 0 24px;
+      border-bottom: 1px solid #26304a;
+      background: #11182b;
+    }
+
+    header h1 {
+      margin: 0;
+      font-size: 19px;
+    }
+
+    .status-line {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      color: #aab4ca;
+      font-size: 13px;
+    }
+
+    .dot {
+      width: 9px;
+      height: 9px;
+      border-radius: 50%;
+      background: #718096;
+    }
+
+    .dot.running { background: #f6c453; }
+    .dot.completed { background: #44d19d; }
+    .dot.failed { background: #ff6b7a; }
+
+    main {
+      height: calc(100vh - 64px);
+      display: grid;
+      grid-template-columns: minmax(0, 1.7fr) minmax(310px, 1fr);
+    }
+
+    .chat-panel {
+      min-width: 0;
+      display: flex;
+      flex-direction: column;
+      border-right: 1px solid #26304a;
+    }
+
+    #messages {
+      flex: 1;
+      overflow-y: auto;
+      padding: 24px;
+    }
+
+    .message {
+      max-width: 820px;
+      margin: 0 auto 18px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .message.user { align-items: flex-end; }
+
+    .message .label {
+      color: #8894ad;
+      font-size: 12px;
+    }
+
+    .bubble {
+      max-width: 86%;
+      padding: 13px 15px;
+      border-radius: 14px;
+      line-height: 1.55;
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      background: #18223a;
+      border: 1px solid #293653;
+    }
+
+    .user .bubble {
+      background: #2957d4;
+      border-color: #3967df;
+    }
+
+    form {
+      display: flex;
+      gap: 12px;
+      padding: 16px 22px 20px;
+      border-top: 1px solid #26304a;
+      background: #11182b;
+    }
+
+    textarea {
+      flex: 1;
+      min-height: 52px;
+      max-height: 160px;
+      resize: vertical;
+      border: 1px solid #34415f;
+      border-radius: 12px;
+      padding: 13px 14px;
+      background: #0e1527;
+      color: #eef2fa;
+      font: inherit;
+      outline: none;
+    }
+
+    textarea:focus { border-color: #5f83ef; }
+
+    button {
+      align-self: flex-end;
+      height: 46px;
+      padding: 0 20px;
+      border: 0;
+      border-radius: 11px;
+      background: #4b72e8;
+      color: white;
+      font-weight: 700;
+      cursor: pointer;
+    }
+
+    button:disabled {
+      cursor: not-allowed;
+      opacity: 0.55;
+    }
+
+    aside {
+      overflow-y: auto;
+      padding: 18px;
+      background: #0e1527;
+    }
+
+    .card {
+      margin-bottom: 14px;
+      padding: 15px;
+      border: 1px solid #283551;
+      border-radius: 13px;
+      background: #131c31;
+    }
+
+    .card h2 {
+      margin: 0 0 12px;
+      font-size: 14px;
+      color: #dce3f3;
+    }
+
+    .meta-grid {
+      display: grid;
+      grid-template-columns: 92px minmax(0, 1fr);
+      gap: 8px;
+      font-size: 13px;
+    }
+
+    .key { color: #8390aa; }
+    .value { overflow-wrap: anywhere; }
+
+    .badge, .tool {
+      display: inline-block;
+      margin: 3px 4px 0 0;
+      padding: 3px 7px;
+      border-radius: 999px;
+      background: #263657;
+      color: #cbd7f0;
+      font-size: 11px;
+    }
+
+    .member {
+      margin-top: 10px;
+      padding: 11px;
+      border-radius: 10px;
+      background: #0e1628;
+      border: 1px solid #25314b;
+    }
+
+    .member strong {
+      display: block;
+      margin-bottom: 5px;
+      color: #dce6ff;
+      font-size: 13px;
+    }
+
+    .small {
+      color: #a8b2c7;
+      font-size: 12px;
+      line-height: 1.45;
+      white-space: pre-wrap;
+    }
+
+    #events {
+      max-height: 40vh;
+      overflow-y: auto;
+    }
+
+    .event {
+      padding: 9px 0;
+      border-bottom: 1px solid #25314b;
+      font-size: 12px;
+    }
+
+    .event:last-child { border-bottom: 0; }
+
+    .event-title {
+      display: flex;
+      justify-content: space-between;
+      gap: 10px;
+      color: #d4dded;
+    }
+
+    .event-time { color: #74819a; }
+    .event-detail { margin-top: 4px; color: #93a0b9; }
+    .empty { color: #74819a; font-size: 12px; }
+
+    @media (max-width: 850px) {
+      main {
+        height: auto;
+        min-height: calc(100vh - 64px);
+        grid-template-columns: 1fr;
+      }
+
+      .chat-panel {
+        min-height: 68vh;
+        border-right: 0;
+        border-bottom: 1px solid #26304a;
+      }
+
+      aside { max-height: none; }
+    }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Agent Space</h1>
+    <div class="status-line">
+      <span id="statusDot" class="dot"></span>
+      <span id="statusText">Idle</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="chat-panel">
+      <div id="messages">
+        <div class="message assistant">
+          <span class="label">Agent Space</span>
+          <div class="bubble">Send a task to start an agent execution.</div>
+        </div>
+      </div>
+
+      <form id="taskForm">
+        <textarea id="taskInput" placeholder="Describe your task..." required></textarea>
+        <button id="sendButton" type="submit">Send</button>
+      </form>
+    </section>
+
+    <aside>
+      <section class="card">
+        <h2>Execution</h2>
+        <div class="meta-grid">
+          <span class="key">Session</span>
+          <span id="sessionId" class="value">—</span>
+          <span class="key">Mode</span>
+          <span id="mode" class="value">—</span>
+          <span class="key">Active</span>
+          <span id="activeAgent" class="value">—</span>
+        </div>
+      </section>
+
+      <section class="card">
+        <h2>Plan</h2>
+        <div id="plan" class="empty">No plan yet.</div>
+      </section>
+
+      <section class="card">
+        <h2>Execution events</h2>
+        <div id="events" class="empty">No events yet.</div>
+      </section>
+    </aside>
+  </main>
+
+  <script>
+    const eventNames = [
+      "session_started",
+      "analysis_started",
+      "analysis_completed",
+      "planning_started",
+      "planning_completed",
+      "agent_running",
+      "agent_completed",
+      "agent_failed",
+      "tool_running",
+      "tool_completed",
+      "tool_failed",
+      "supervisor_selected_task",
+      "synthesis_started",
+      "synthesis_completed",
+      "synthesis_failed",
+      "execution_failed",
+      "session_completed",
+      "session_failed"
+    ];
+
+    const terminalEvents = new Set([
+      "session_completed",
+      "session_failed"
+    ]);
+
+    const labels = {
+      session_started: "Session started",
+      analysis_started: "Analyzing task",
+      analysis_completed: "Analysis completed",
+      planning_started: "Creating team plan",
+      planning_completed: "Plan completed",
+      agent_running: "Agent running",
+      agent_completed: "Agent completed",
+      agent_failed: "Agent failed",
+      tool_running: "Tool running",
+      tool_completed: "Tool completed",
+      tool_failed: "Tool failed",
+      supervisor_selected_task: "Supervisor selected task",
+      synthesis_started: "Synthesizing response",
+      synthesis_completed: "Synthesis completed",
+      synthesis_failed: "Synthesis failed",
+      execution_failed: "Execution failed",
+      session_completed: "Session completed",
+      session_failed: "Session failed"
+    };
+
+    const form = document.getElementById("taskForm");
+    const input = document.getElementById("taskInput");
+    const sendButton = document.getElementById("sendButton");
+    const messages = document.getElementById("messages");
+    const eventsBox = document.getElementById("events");
+    const planBox = document.getElementById("plan");
+    const sessionIdBox = document.getElementById("sessionId");
+    const modeBox = document.getElementById("mode");
+    const activeAgentBox = document.getElementById("activeAgent");
+    const statusText = document.getElementById("statusText");
+    const statusDot = document.getElementById("statusDot");
+
+    let source = null;
+    let currentSessionId = null;
+    let finalDisplayed = false;
+    let seenEvents = new Set();
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#039;");
+    }
+
+    function setBusy(busy) {
+      sendButton.disabled = busy;
+      input.disabled = busy;
+    }
+
+    function setStatus(text, state = "running") {
+      statusText.textContent = text;
+      statusDot.className = `dot ${state}`;
+    }
+
+    function addMessage(role, text) {
+      const item = document.createElement("div");
+      item.className = `message ${role}`;
+
+      const label = document.createElement("span");
+      label.className = "label";
+      label.textContent = role === "user" ? "You" : "Agent Space";
+
+      const bubble = document.createElement("div");
+      bubble.className = "bubble";
+      bubble.textContent = text;
+
+      item.append(label, bubble);
+      messages.appendChild(item);
+      messages.scrollTop = messages.scrollHeight;
+    }
+
+    function toolsHtml(toolIds = []) {
+      if (!toolIds.length) return '<span class="small">No shared tools</span>';
+      return toolIds
+        .map(tool => `<span class="tool">${escapeHtml(tool)}</span>`)
+        .join("");
+    }
+
+    function renderPlan(session) {
+      if (session.single_plan) {
+        const plan = session.single_plan;
+        modeBox.textContent = "Single";
+        planBox.className = "";
+        planBox.innerHTML = `
+          <div class="member">
+            <strong>${escapeHtml(plan.agent_id)}</strong>
+            <div class="small">${escapeHtml(plan.task)}</div>
+            <div>${toolsHtml(plan.assigned_tool_ids)}</div>
+          </div>`;
+        return;
+      }
+
+      if (session.team_plan) {
+        const plan = session.team_plan;
+        modeBox.textContent = `Team · ${plan.orchestration}`;
+        planBox.className = "";
+        planBox.innerHTML = plan.members.map(member => {
+          const tasks = plan.tasks.filter(
+            task => task.agent_instance_id === member.instance_id
+          );
+          const taskText = tasks.length
+            ? tasks.map(task => `${task.task_id}: ${task.instruction}`).join("\n")
+            : member.task;
+
+          return `
+            <div class="member">
+              <strong>${escapeHtml(member.instance_id)} · ${escapeHtml(member.agent_id)}</strong>
+              <div class="small">Role: ${escapeHtml(member.role)}</div>
+              <div class="small">${escapeHtml(taskText)}</div>
+              <div>${toolsHtml(member.assigned_tool_ids)}</div>
+            </div>`;
+        }).join("");
+      }
+    }
+
+    async function loadSession(showFinal = false) {
+      if (!currentSessionId) return null;
+
+      const response = await fetch(`/sessions/${currentSessionId}`);
+      if (!response.ok) return null;
+
+      const session = await response.json();
+      renderPlan(session);
+
+      if (showFinal && !finalDisplayed && session.final_result) {
+        const result = session.final_result;
+        const text = result.final_answer ||
+          `Execution failed: ${(result.errors || []).join("; ") || "Unknown error"}`;
+        addMessage("assistant", text);
+        finalDisplayed = true;
+      }
+
+      return session;
+    }
+
+    function eventDetail(event) {
+      const details = event.details || {};
+      const parts = [];
+
+      if (event.agent_id) parts.push(`agent: ${event.agent_id}`);
+      if (event.task_id) parts.push(`task: ${event.task_id}`);
+      if (details.tool_name) parts.push(`tool: ${details.tool_name}`);
+      if (event.assigned_tool_ids?.length) {
+        parts.push(`assigned tools: ${event.assigned_tool_ids.join(", ")}`);
+      }
+      if (details.error) parts.push(`error: ${details.error}`);
+
+      return parts.join(" · ");
+    }
+
+    function appendEvent(event) {
+      const key = [
+        event.event_type,
+        event.timestamp,
+        event.agent_id,
+        event.instance_id,
+        event.task_id,
+        event.details?.tool_name
+      ].join("|");
+
+      if (seenEvents.has(key)) return;
+      seenEvents.add(key);
+
+      if (eventsBox.classList.contains("empty")) {
+        eventsBox.className = "";
+        eventsBox.innerHTML = "";
+      }
+
+      const item = document.createElement("div");
+      item.className = "event";
+      const time = event.timestamp
+        ? new Date(event.timestamp).toLocaleTimeString()
+        : "";
+      const detail = eventDetail(event);
+
+      item.innerHTML = `
+        <div class="event-title">
+          <span>${escapeHtml(labels[event.event_type] || event.event_type)}</span>
+          <span class="event-time">${escapeHtml(time)}</span>
+        </div>
+        ${detail ? `<div class="event-detail">${escapeHtml(detail)}</div>` : ""}`;
+
+      eventsBox.appendChild(item);
+      eventsBox.scrollTop = eventsBox.scrollHeight;
+    }
+
+    async function handleEvent(event) {
+      appendEvent(event);
+      const details = event.details || {};
+
+      if (event.agent_id) activeAgentBox.textContent = event.agent_id;
+
+      switch (event.event_type) {
+        case "session_started":
+          setStatus("Running");
+          break;
+        case "analysis_started":
+          setStatus("Analyzing");
+          break;
+        case "analysis_completed":
+          modeBox.textContent = details.execution_mode || "—";
+          setStatus("Analysis completed");
+          break;
+        case "planning_started":
+          setStatus("Planning");
+          break;
+        case "planning_completed":
+          setStatus("Plan ready");
+          await loadSession(false);
+          break;
+        case "agent_running":
+          setStatus(`${event.agent_id || "Agent"} running`);
+          break;
+        case "tool_running":
+          setStatus(`Using ${details.tool_name || "tool"}`);
+          break;
+        case "synthesis_started":
+          setStatus("Synthesizing");
+          break;
+        case "session_completed":
+          source?.close();
+          setStatus("Completed", "completed");
+          activeAgentBox.textContent = "—";
+          await loadSession(true);
+          setBusy(false);
+          break;
+        case "session_failed":
+          source?.close();
+          setStatus("Failed", "failed");
+          activeAgentBox.textContent = "—";
+          await loadSession(true);
+          setBusy(false);
+          break;
+      }
+    }
+
+    function connectEvents(url) {
+      source?.close();
+      source = new EventSource(url);
+
+      for (const eventName of eventNames) {
+        source.addEventListener(eventName, message => {
+          try {
+            handleEvent(JSON.parse(message.data));
+          } catch (error) {
+            console.error("Invalid event", error);
+          }
+        });
+      }
+
+      source.onerror = () => {
+        if (!finalDisplayed) {
+          setStatus("Reconnecting to event stream");
+        }
+      };
+    }
+
+    function resetExecution() {
+      source?.close();
+      currentSessionId = null;
+      finalDisplayed = false;
+      seenEvents = new Set();
+      sessionIdBox.textContent = "—";
+      modeBox.textContent = "—";
+      activeAgentBox.textContent = "—";
+      planBox.className = "empty";
+      planBox.textContent = "No plan yet.";
+      eventsBox.className = "empty";
+      eventsBox.textContent = "No events yet.";
+      setStatus("Starting");
+    }
+
+    form.addEventListener("submit", async event => {
+      event.preventDefault();
+      const task = input.value.trim();
+      if (!task) return;
+
+      resetExecution();
+      addMessage("user", task);
+      input.value = "";
+      setBusy(true);
+
+      try {
+        const response = await fetch("/tasks/start", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ task })
+        });
+
+        const data = await response.json();
+        if (!response.ok) {
+          throw new Error(data.detail || "Could not start task.");
+        }
+
+        currentSessionId = data.session_id;
+        sessionIdBox.textContent = currentSessionId;
+        connectEvents(data.events_url);
+      } catch (error) {
+        setStatus("Failed", "failed");
+        addMessage("assistant", `Could not start task: ${error.message}`);
+        setBusy(false);
+      }
+    });
+
+    input.addEventListener("keydown", event => {
+      if (event.key === "Enter" && !event.shiftKey) {
+        event.preventDefault();
+        form.requestSubmit();
+      }
+    });
+  </script>
+</body>
+</html>

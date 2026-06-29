@@ -62,6 +62,8 @@ class ExecutionEvent(BaseSchema):
     agent_id: Optional[str] = None
     instance_id: Optional[str] = None
     task_id: Optional[str] = None
+    task: Optional[str] = None
+    assigned_tool_ids: List[str] = Field(default_factory=list)
     details: Dict[str, Any] = Field(default_factory=dict)
     timestamp: datetime = Field(default_factory=utc_now)
 
