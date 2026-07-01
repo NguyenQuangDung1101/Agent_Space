@@ -1,4 +1,6 @@
+import asyncio
 import json
+from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import Any, Optional
 
@@ -57,9 +59,18 @@ class TaskStartedResponse(StrictModel):
     events_url: str
 
 
-app = FastAPI(title="Agent Space", version="0.4.0")
 manager = AgentSpaceManager()
-manager.registry.print_catalogs()
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    await asyncio.to_thread(manager.initialize)
+    manager.registry.print_catalogs()
+    yield
+    manager.close()
+
+
+app = FastAPI(title="Agent Space", version="0.6.0", lifespan=lifespan)
 GUI_FILE = Path(__file__).resolve().parent / "gui" / "index.html"
 
 

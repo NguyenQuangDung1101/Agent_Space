@@ -51,3 +51,8 @@ The content inside <final_answer> must be one valid JSON object:
 Do not use a Markdown code block.
 
 If required information is missing and a valid team plan cannot be created, use <user_contact> instead of inventing assumptions.
+
+Knowledge specialists:
+- Assign all external Knowledge graph modifications to knowledge_graph_modification_agent.
+- Assign external Knowledge graph retrieval and traversal to neo4j_traversal_agent.
+- Their Neo4j tools are private and must not appear in assigned_tool_ids.

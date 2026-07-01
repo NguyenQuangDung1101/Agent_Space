@@ -186,6 +186,29 @@ class ConversationStore:
                 return SessionRecord.model_validate(self._read(path))
         raise FileNotFoundError(f"Session not found: {session_id}")
 
+
+    def list_sessions(self, conversation_id: str) -> list[SessionRecord]:
+        self.get_conversation(conversation_id)
+        sessions = []
+        root = self.conversation_dir(conversation_id) / "sessions"
+        for path in root.glob("*/session.json"):
+            try:
+                sessions.append(SessionRecord.model_validate(self._read(path)))
+            except Exception:
+                continue
+        return sorted(sessions, key=lambda item: item.created_at)
+
+    def list_contacts(
+        self,
+        conversation_id: str,
+        session_id: str,
+    ) -> list[UserContactRequest]:
+        path = self.session_dir(conversation_id, session_id) / "contacts.json"
+        return [
+            UserContactRequest.model_validate(item)
+            for item in self._read(path, [])
+        ]
+
     def pending_session(self, conversation_id: str) -> Optional[SessionRecord]:
         sessions_root = self.conversation_dir(conversation_id) / "sessions"
         waiting = []

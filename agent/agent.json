@@ -65,5 +65,43 @@
     "allowed_callers": [
       "manager"
     ]
+  },
+  {
+    "id": "knowledge_graph_modification_agent",
+    "type": "fixed",
+    "description": "Analyze documents, propose reviewed import/delete plans, and modify only the protected external Knowledge graph after user approval.",
+    "capabilities": [
+      "document_analysis",
+      "knowledge_graph_import",
+      "knowledge_graph_delete",
+      "approval_gated_modification"
+    ],
+    "selectable_as_worker": true,
+    "path": "agent/knowledge_graph_modification_agent",
+    "prompt_path": "agent/knowledge_graph_modification_agent/system_prompt.txt",
+    "allowed_callers": [
+      "manager",
+      "analyze_agent",
+      "planner_agent"
+    ]
+  },
+  {
+    "id": "neo4j_traversal_agent",
+    "type": "fixed",
+    "description": "Retrieve external Knowledge graph data using private anchor search, hop expansion, and path-finding tools.",
+    "capabilities": [
+      "knowledge_graph_retrieval",
+      "hybrid_anchor_search",
+      "graph_traversal",
+      "path_finding"
+    ],
+    "selectable_as_worker": true,
+    "path": "agent/neo4j_traversal_agent",
+    "prompt_path": "agent/neo4j_traversal_agent/system_prompt.txt",
+    "allowed_callers": [
+      "manager",
+      "analyze_agent",
+      "planner_agent"
+    ]
   }
 ]

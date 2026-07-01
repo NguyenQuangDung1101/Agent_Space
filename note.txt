@@ -3,18 +3,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 
 ollama signin
 python -m share.agent 
-python -m uvicorn agent.agent_of_requirement.server:app --port 8001
-python -m uvicorn agent.analyze_agent.server:app --port 8002
-python -m uvicorn agent.planner_agent.server:app --port 8003
-python -m uvicorn agent.synthesizer_agent.server:app --port 8004
+python -m uvicorn agent.agent_of_requirement.server:app --port 800
 
-curl -X POST "http://127.0.0.1:8002/run" ^
-  -H "Content-Type: application/json" ^
-  -d "{\"session_id\":\"test-session-1\",\"caller_id\":\"manager\",\"task\":\"Create a Python program that reads a CSV file and calculates average student scores.\",\"context\":{},\"assigned_tool_ids\":[],\"max_steps\":5}"
+docker compose up -d neo4j
+uvicorn app:app --host 127.0.0.1 --port 8000
 
-
-
-
+neo4j browser: http://localhost:7474
 
 
 # CURRENT STATE

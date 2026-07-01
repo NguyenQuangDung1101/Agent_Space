@@ -1,0 +1,14 @@
+CREATE CONSTRAINT agent_space_system_id IF NOT EXISTS FOR (n:System) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_agent_id IF NOT EXISTS FOR (n:Agent) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_tool_id IF NOT EXISTS FOR (n:Tool) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_conversation_id IF NOT EXISTS FOR (n:Conversation) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_message_id IF NOT EXISTS FOR (n:Message) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_memory_id IF NOT EXISTS FOR (n:MemorySnapshot) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_session_id IF NOT EXISTS FOR (n:Session) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_task_id IF NOT EXISTS FOR (n:Task) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_analysis_id IF NOT EXISTS FOR (n:Analysis) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_solution_id IF NOT EXISTS FOR (n:Solution) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_execution_id IF NOT EXISTS FOR (n:Execution) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_agent_run_id IF NOT EXISTS FOR (n:AgentRun) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_tool_run_id IF NOT EXISTS FOR (n:ToolRun) REQUIRE n.id IS UNIQUE;
+CREATE CONSTRAINT agent_space_contact_id IF NOT EXISTS FOR (n:UserContact) REQUIRE n.id IS UNIQUE;

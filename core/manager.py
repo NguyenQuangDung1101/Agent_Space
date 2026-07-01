@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from pathlib import Path
 from typing import Any, AsyncIterator, Optional
 from uuid import uuid4
@@ -7,6 +8,11 @@ from agent.analyze_agent.service import AnalyzeAgentService
 from agent.planner_agent.service import PlannerAgentService
 from agent.synthesizer_agent.service import SynthesizerAgentService
 from core.orchestrator import Orchestrator
+from database.knowledge_repository import (
+    close_knowledge_repository,
+    get_knowledge_repository,
+)
+from database.neo4j_repository import Neo4jRepository
 from share.agent_factory import AgentFactory
 from share.conversation_store import ConversationStore
 from share.event_broker import EventBroker
@@ -24,6 +30,9 @@ from share.schemas import (
     TeamPlan,
     utc_now,
 )
+
+
+logger = logging.getLogger(__name__)
 
 
 class AgentSpaceManager:
@@ -56,12 +65,57 @@ class AgentSpaceManager:
         self.store = ConversationStore(
             conversations_dir or project_root / "data" / "conversations"
         )
+        self.neo4j = Neo4jRepository()
+
+    def initialize(self) -> None:
+        self.neo4j.rebuild(self.store, self.registry)
+        self.knowledge = (
+            get_knowledge_repository() if self.neo4j.enabled else None
+        )
+
+    def close(self) -> None:
+        if getattr(self, "knowledge", None):
+            close_knowledge_repository()
+            self.knowledge = None
+        self.neo4j.close()
+
+    def _mirror(self, method: str, *args: Any) -> None:
+        if not self.neo4j.enabled:
+            return
+        try:
+            getattr(self.neo4j, method)(*args)
+        except Exception:
+            logger.exception("Neo4j mirror failed: %s", method)
+
+    def _save_conversation(self, conversation: Conversation) -> None:
+        self.store.save_conversation(conversation)
+        self._mirror("save_conversation", conversation)
+
+    def _add_message(self, message: Message) -> Message:
+        saved = self.store.add_message(message)
+        self._mirror("save_message", saved)
+        return saved
+
+    def _save_session(self, session: SessionRecord) -> None:
+        self.store.save_session(session)
+        self._mirror("save_session", session)
+
+    def _save_contact(self, contact, update: bool = False) -> None:
+        if update:
+            self.store.update_contact(contact)
+        else:
+            self.store.add_contact(contact)
+        self._mirror("save_contact", contact)
 
     def create_conversation(
         self,
         title: Optional[str] = None,
     ) -> Conversation:
-        return self.store.create_conversation(title)
+        conversation = self.store.create_conversation(title)
+        self._mirror("save_conversation", conversation)
+        memory = self.store.get_memory(conversation.conversation_id)
+        self._mirror("save_memory", memory)
+        return conversation
 
     def list_conversations(self) -> list[Conversation]:
         return self.store.list_conversations()
@@ -201,7 +255,7 @@ class AgentSpaceManager:
             status="RUNNING",
         )
         message.session_id = session.session_id
-        self.store.add_message(message)
+        self._add_message(message)
         self._write_json(
             session,
             "request.json",
@@ -215,7 +269,7 @@ class AgentSpaceManager:
                 "max_steps": max_steps,
             },
         )
-        self.store.save_session(session)
+        self._save_session(session)
         events: list[ExecutionEvent] = []
         self._record_event(
             session,
@@ -232,7 +286,7 @@ class AgentSpaceManager:
         conversation = self.store.get_conversation(conversation_id)
         if not conversation.title:
             conversation.title = content[:80]
-            self.store.save_conversation(conversation)
+            self._save_conversation(conversation)
 
     def start_message(
         self,
@@ -244,7 +298,9 @@ class AgentSpaceManager:
         attachments: Optional[list[str]] = None,
     ) -> tuple[SessionRecord, Message, bool]:
         self.store.get_conversation(conversation_id)
-        clean_context = context or {}
+        clean_context = dict(context or {})
+        if attachments:
+            clean_context["attachments"] = list(attachments)
         allowed_tool_ids = list(dict.fromkeys(assigned_tool_ids or []))
         pending = self.store.pending_session(conversation_id)
 
@@ -263,16 +319,16 @@ class AgentSpaceManager:
                 contact_request_id=contact.contact_id,
                 attachments=attachments or [],
             )
-            self.store.add_message(message)
+            self._add_message(message)
             contact.status = "ANSWERED"
             contact.answer_message_id = message.message_id
             contact.response = content
             contact.answered_at = utc_now()
-            self.store.update_contact(contact)
+            self._save_contact(contact, update=True)
 
             pending.status = "RUNNING"
             pending.pending_contact_id = None
-            self.store.save_session(pending)
+            self._save_session(pending)
             events = self.get_events(pending.session_id)
             self._record_event(
                 pending,
@@ -394,6 +450,7 @@ class AgentSpaceManager:
                 ],
             },
         )
+        self._mirror("save_plan", session, plan)
 
     def _save_team_plan(self, session: SessionRecord, plan: TeamPlan) -> None:
         self._write_json(session, "team_plan.json", plan)
@@ -416,6 +473,7 @@ class AgentSpaceManager:
                 ],
             },
         )
+        self._mirror("save_plan", session, plan)
 
     def _control_waiting(
         self,
@@ -505,7 +563,7 @@ class AgentSpaceManager:
         session.analysis = analysis
         session.execution_mode = analysis.execution_mode
         self._write_json(session, "analysis.json", analysis)
-        self.store.save_session(session)
+        self._save_session(session)
         self._record_event(
             session,
             events,
@@ -795,7 +853,7 @@ class AgentSpaceManager:
             self.orchestrator.validate_plan(plan)
             session.team_plan = plan
             self._save_team_plan(session, plan)
-            self.store.save_session(session)
+            self._save_session(session)
             self._record_event(
                 session,
                 events,
@@ -1108,6 +1166,7 @@ class AgentSpaceManager:
                 "errors": execution.errors,
             },
         )
+        self._mirror("save_execution", session, execution)
 
     def _update_memory(
         self,
@@ -1122,6 +1181,7 @@ class AgentSpaceManager:
         memory.summary = f"{memory.summary}\n\n{entry}".strip()[-8000:]
         memory.session_ids = (memory.session_ids + [session.session_id])[-20:]
         self.store.save_memory(memory)
+        self._mirror("save_memory", memory)
 
     def _finish_or_pause(
         self,
@@ -1149,7 +1209,7 @@ class AgentSpaceManager:
                     "checkpoint.json",
                     execution.checkpoint,
                 )
-                self.store.add_contact(contact)
+                self._save_contact(contact)
                 self._record_event(
                     session,
                     events,
@@ -1170,7 +1230,8 @@ class AgentSpaceManager:
                 execution.events = list(events)
                 session.final_result = execution
                 self._persist_execution(session, execution)
-                self.store.save_session(session)
+                self._mirror("save_contact", contact)
+                self._save_session(session)
                 return execution
 
         assistant_text = execution.final_answer
@@ -1186,7 +1247,7 @@ class AgentSpaceManager:
             content=assistant_text,
             session_id=session.session_id,
         )
-        self.store.add_message(assistant_message)
+        self._add_message(assistant_message)
         if execution.status == "COMPLETED":
             self._update_memory(session, assistant_text)
 
@@ -1213,7 +1274,7 @@ class AgentSpaceManager:
         session.final_result = execution
         self._persist_execution(session, execution)
         self._write_json(session, "checkpoint.json", {})
-        self.store.save_session(session)
+        self._save_session(session)
         self.event_broker.publish(session.session_id, terminal)
         return execution
 

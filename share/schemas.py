@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from typing import Any, Dict, List, Literal, Optional
 
-from pydantic import AliasChoices, BaseModel, ConfigDict, Field
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, model_validator
 
 
 AgentStatus = Literal[
@@ -79,6 +79,77 @@ class UserContactRequest(BaseSchema):
     response: Optional[str] = None
     created_at: datetime = Field(default_factory=utc_now)
     answered_at: Optional[datetime] = None
+
+
+KnowledgeNodeKind = Literal[
+    "KnowledgeDocument",
+    "KnowledgeChunk",
+    "KnowledgeEntity",
+]
+KnowledgeRelationshipType = Literal[
+    "HAS_DOCUMENT",
+    "HAS_CHUNK",
+    "HAS_ENTITY",
+    "MENTIONS",
+    "RELATED_TO",
+    "SUPPORTED_BY",
+]
+
+
+class ImportNode(BaseSchema):
+    id: str
+    kind: KnowledgeNodeKind
+    name: str
+    description: str = ""
+    properties: Dict[str, Any] = Field(default_factory=dict)
+    parent_id: Optional[str] = None
+
+
+class ImportRelationship(BaseSchema):
+    source_id: str
+    target_id: str
+    type: KnowledgeRelationshipType
+    properties: Dict[str, Any] = Field(default_factory=dict)
+
+
+class ImportPlan(BaseSchema):
+    nodes: List[ImportNode] = Field(default_factory=list)
+    relationships: List[ImportRelationship] = Field(default_factory=list)
+
+
+class DeleteRelationship(BaseSchema):
+    source_id: str
+    target_id: str
+    type: KnowledgeRelationshipType
+
+
+class DeletePlan(BaseSchema):
+    node_ids: List[str] = Field(default_factory=list)
+    relationships: List[DeleteRelationship] = Field(default_factory=list)
+
+
+class ModificationPlan(BaseSchema):
+    operation: Literal["import", "delete"]
+    summary: str
+    import_plan: Optional[ImportPlan] = None
+    delete_plan: Optional[DeletePlan] = None
+
+    @model_validator(mode="after")
+    def validate_operation_plan(self):
+        if self.operation == "import":
+            if self.import_plan is None or self.delete_plan is not None:
+                raise ValueError("Import operation requires only import_plan.")
+        elif self.delete_plan is None or self.import_plan is not None:
+            raise ValueError("Delete operation requires only delete_plan.")
+        return self
+
+
+class ModificationResult(BaseSchema):
+    success: bool
+    applied_nodes: List[str] = Field(default_factory=list)
+    applied_relationships: List[str] = Field(default_factory=list)
+    failures: List[str] = Field(default_factory=list)
+    validation: Dict[str, Any] = Field(default_factory=dict)
 
 
 class ToolCall(BaseSchema):
