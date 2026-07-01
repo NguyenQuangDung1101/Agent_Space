@@ -9,7 +9,7 @@ from pydantic import AliasChoices, BaseModel, ConfigDict, Field
 AgentStatus = Literal[
     "PENDING",
     "RUNNING",
-    "WAITING",
+    "WAITING_FOR_USER",
     "COMPLETED",
     "FAILED",
 ]
@@ -19,11 +19,13 @@ OrchestrationMode = Literal[
     "parallel",
     "supervisor",
 ]
-MessageType = Literal[
+AgentMessageType = Literal[
     "direct",
     "broadcast",
     "manager",
 ]
+ConversationRole = Literal["user", "assistant"]
+ContactStatus = Literal["PENDING", "ANSWERED"]
 
 
 def utc_now() -> datetime:
@@ -35,6 +37,48 @@ class BaseSchema(BaseModel):
         extra="forbid",
         str_strip_whitespace=True,
     )
+
+
+class Conversation(BaseSchema):
+    conversation_id: str
+    title: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class Message(BaseSchema):
+    message_id: str
+    conversation_id: str
+    role: ConversationRole
+    content: str
+    session_id: Optional[str] = None
+    contact_request_id: Optional[str] = None
+    attachments: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=utc_now)
+
+
+class ConversationMemory(BaseSchema):
+    conversation_id: str
+    summary: str = ""
+    session_ids: List[str] = Field(default_factory=list)
+    updated_at: datetime = Field(default_factory=utc_now)
+
+
+class UserContactRequest(BaseSchema):
+    contact_id: str
+    conversation_id: str
+    session_id: str
+    agent_id: str
+    agent_name: str
+    instance_id: str
+    question: str
+    reason: str = ""
+    expected_response: str = "Free-text response"
+    status: ContactStatus = "PENDING"
+    answer_message_id: Optional[str] = None
+    response: Optional[str] = None
+    created_at: datetime = Field(default_factory=utc_now)
+    answered_at: Optional[datetime] = None
 
 
 class ToolCall(BaseSchema):
@@ -49,10 +93,10 @@ class ToolResult(BaseSchema):
     error: Optional[str] = None
 
 
-class Message(BaseSchema):
+class AgentMessage(BaseSchema):
     sender: str
     recipient: str
-    message_type: MessageType = "direct"
+    message_type: AgentMessageType = "direct"
     content: str
     timestamp: datetime = Field(default_factory=utc_now)
 
@@ -70,11 +114,15 @@ class ExecutionEvent(BaseSchema):
 
 class AgentRequest(BaseSchema):
     session_id: str
+    conversation_id: Optional[str] = None
     caller_id: str
     task: str
     context: Dict[str, Any] = Field(default_factory=dict)
     assigned_tool_ids: List[str] = Field(default_factory=list)
     runtime_system_prompt: Optional[str] = None
+    instance_id: Optional[str] = None
+    checkpoint: Optional[Dict[str, Any]] = None
+    user_response: Optional[str] = None
     max_steps: int = Field(default=10, ge=1)
 
 
@@ -85,7 +133,9 @@ class AgentResult(BaseSchema):
     final_answer: Optional[str] = None
     tool_calls: List[ToolCall] = Field(default_factory=list)
     tool_results: List[ToolResult] = Field(default_factory=list)
-    messages: List[Message] = Field(default_factory=list)
+    messages: List[AgentMessage] = Field(default_factory=list)
+    user_contact: Optional[UserContactRequest] = None
+    checkpoint: Optional[Dict[str, Any]] = None
     error: Optional[str] = None
 
 
@@ -144,22 +194,27 @@ class TeamPlan(BaseSchema):
 class ExecutionResult(BaseSchema):
     session_id: str
     status: AgentStatus
-    execution_mode: ExecutionMode
+    execution_mode: Optional[ExecutionMode] = None
     final_answer: Optional[str] = None
     agent_results: List[AgentResult] = Field(default_factory=list)
-    messages: List[Message] = Field(default_factory=list)
+    messages: List[AgentMessage] = Field(default_factory=list)
     events: List[ExecutionEvent] = Field(default_factory=list)
+    pending_contact: Optional[UserContactRequest] = None
+    checkpoint: Optional[Dict[str, Any]] = None
     errors: List[str] = Field(default_factory=list)
 
 
 class SessionRecord(BaseSchema):
     session_id: str
+    conversation_id: str
+    trigger_message_id: str
     original_request: str
     status: AgentStatus = "PENDING"
     execution_mode: Optional[ExecutionMode] = None
     analysis: Optional[AnalysisResult] = None
     single_plan: Optional[SingleAgentPlan] = None
     team_plan: Optional[TeamPlan] = None
+    pending_contact_id: Optional[str] = None
     final_result: Optional[ExecutionResult] = None
     created_at: datetime = Field(default_factory=utc_now)
     updated_at: datetime = Field(default_factory=utc_now)

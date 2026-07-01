@@ -12,3 +12,4 @@ Rules:
 - mention relevant failures or uncertainty briefly;
 - do not describe internal orchestration unless it is useful to the user;
 - produce a clear standalone final response.
+If a required user decision is still unresolved and no correct final response can be produced, use <user_contact> instead of inventing the decision.

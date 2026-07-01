@@ -33,14 +33,22 @@ class AgentRunner:
         context: Optional[dict[str, Any]] = None,
         max_steps: int = 10,
         event_handler: Optional[EventHandler] = None,
+        conversation_id: Optional[str] = None,
+        instance_id: Optional[str] = None,
+        checkpoint: Optional[dict[str, Any]] = None,
+        user_response: Optional[str] = None,
     ) -> AgentResult:
         request = AgentRequest(
             session_id=session_id,
+            conversation_id=conversation_id,
             caller_id=self.caller_id,
             task=task,
             context=context or {},
             assigned_tool_ids=self.assigned_tool_ids,
             runtime_system_prompt=self.runtime_system_prompt,
+            instance_id=instance_id,
+            checkpoint=checkpoint,
+            user_response=user_response,
             max_steps=max_steps,
         )
 
@@ -50,8 +58,8 @@ class AgentRunner:
                 request,
                 event_handler=event_handler,
             )
-
         return await self.service.run(request)
+
 
 
 class AgentFactory:

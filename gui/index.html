@@ -54,6 +54,7 @@
     .dot.running { background: #f6c453; }
     .dot.completed { background: #44d19d; }
     .dot.failed { background: #ff6b7a; }
+    .dot.waiting { background: #63b3ed; }
 
     main {
       height: calc(100vh - 64px);
@@ -277,6 +278,8 @@
       <section class="card">
         <h2>Execution</h2>
         <div class="meta-grid">
+          <span class="key">Conversation</span>
+          <span id="conversationId" class="value">—</span>
           <span class="key">Session</span>
           <span id="sessionId" class="value">—</span>
           <span class="key">Mode</span>
@@ -300,6 +303,7 @@
 
   <script>
     const eventNames = [
+      "message_received",
       "session_started",
       "analysis_started",
       "analysis_completed",
@@ -312,6 +316,9 @@
       "tool_completed",
       "tool_failed",
       "supervisor_selected_task",
+      "user_contact_requested",
+      "user_contact_answered",
+      "session_resumed",
       "synthesis_started",
       "synthesis_completed",
       "synthesis_failed",
@@ -320,12 +327,8 @@
       "session_failed"
     ];
 
-    const terminalEvents = new Set([
-      "session_completed",
-      "session_failed"
-    ]);
-
     const labels = {
+      message_received: "Message received",
       session_started: "Session started",
       analysis_started: "Analyzing task",
       analysis_completed: "Analysis completed",
@@ -338,6 +341,9 @@
       tool_completed: "Tool completed",
       tool_failed: "Tool failed",
       supervisor_selected_task: "Supervisor selected task",
+      user_contact_requested: "Waiting for user",
+      user_contact_answered: "User response received",
+      session_resumed: "Session resumed",
       synthesis_started: "Synthesizing response",
       synthesis_completed: "Synthesis completed",
       synthesis_failed: "Synthesis failed",
@@ -352,6 +358,7 @@
     const messages = document.getElementById("messages");
     const eventsBox = document.getElementById("events");
     const planBox = document.getElementById("plan");
+    const conversationIdBox = document.getElementById("conversationId");
     const sessionIdBox = document.getElementById("sessionId");
     const modeBox = document.getElementById("mode");
     const activeAgentBox = document.getElementById("activeAgent");
@@ -359,8 +366,10 @@
     const statusDot = document.getElementById("statusDot");
 
     let source = null;
+    let currentConversationId = null;
     let currentSessionId = null;
     let finalDisplayed = false;
+    let awaitingUser = false;
     let seenEvents = new Set();
 
     function escapeHtml(value) {
@@ -375,6 +384,9 @@
     function setBusy(busy) {
       sendButton.disabled = busy;
       input.disabled = busy;
+      input.placeholder = awaitingUser
+        ? "Reply to the agent..."
+        : "Describe your task...";
     }
 
     function setStatus(text, state = "running") {
@@ -382,13 +394,13 @@
       statusDot.className = `dot ${state}`;
     }
 
-    function addMessage(role, text) {
+    function addMessage(role, text, customLabel = null) {
       const item = document.createElement("div");
       item.className = `message ${role}`;
 
       const label = document.createElement("span");
       label.className = "label";
-      label.textContent = role === "user" ? "You" : "Agent Space";
+      label.textContent = customLabel || (role === "user" ? "You" : "Agent Space");
 
       const bubble = document.createElement("div");
       bubble.className = "bubble";
@@ -431,7 +443,6 @@
           const taskText = tasks.length
             ? tasks.map(task => `${task.task_id}: ${task.instruction}`).join("\n")
             : member.task;
-
           return `
             <div class="member">
               <strong>${escapeHtml(member.instance_id)} · ${escapeHtml(member.agent_id)}</strong>
@@ -445,10 +456,8 @@
 
     async function loadSession(showFinal = false) {
       if (!currentSessionId) return null;
-
       const response = await fetch(`/sessions/${currentSessionId}`);
       if (!response.ok) return null;
-
       const session = await response.json();
       renderPlan(session);
 
@@ -459,14 +468,12 @@
         addMessage("assistant", text);
         finalDisplayed = true;
       }
-
       return session;
     }
 
     function eventDetail(event) {
       const details = event.details || {};
       const parts = [];
-
       if (event.agent_id) parts.push(`agent: ${event.agent_id}`);
       if (event.task_id) parts.push(`task: ${event.task_id}`);
       if (details.tool_name) parts.push(`tool: ${details.tool_name}`);
@@ -474,7 +481,6 @@
         parts.push(`assigned tools: ${event.assigned_tool_ids.join(", ")}`);
       }
       if (details.error) parts.push(`error: ${details.error}`);
-
       return parts.join(" · ");
     }
 
@@ -485,39 +491,36 @@
         event.agent_id,
         event.instance_id,
         event.task_id,
+        event.details?.contact_id,
         event.details?.tool_name
       ].join("|");
-
-      if (seenEvents.has(key)) return;
+      if (seenEvents.has(key)) return false;
       seenEvents.add(key);
 
       if (eventsBox.classList.contains("empty")) {
         eventsBox.className = "";
         eventsBox.innerHTML = "";
       }
-
       const item = document.createElement("div");
       item.className = "event";
       const time = event.timestamp
         ? new Date(event.timestamp).toLocaleTimeString()
         : "";
       const detail = eventDetail(event);
-
       item.innerHTML = `
         <div class="event-title">
           <span>${escapeHtml(labels[event.event_type] || event.event_type)}</span>
           <span class="event-time">${escapeHtml(time)}</span>
         </div>
         ${detail ? `<div class="event-detail">${escapeHtml(detail)}</div>` : ""}`;
-
       eventsBox.appendChild(item);
       eventsBox.scrollTop = eventsBox.scrollHeight;
+      return true;
     }
 
     async function handleEvent(event) {
-      appendEvent(event);
+      if (!appendEvent(event)) return;
       const details = event.details || {};
-
       if (event.agent_id) activeAgentBox.textContent = event.agent_id;
 
       switch (event.event_type) {
@@ -544,11 +547,29 @@
         case "tool_running":
           setStatus(`Using ${details.tool_name || "tool"}`);
           break;
+        case "user_contact_requested":
+          awaitingUser = true;
+          setStatus("Waiting for your reply", "waiting");
+          addMessage(
+            "assistant",
+            details.question || "The agent needs more information.",
+            details.agent_name || event.agent_id || "Agent"
+          );
+          setBusy(false);
+          input.focus();
+          break;
+        case "user_contact_answered":
+        case "session_resumed":
+          awaitingUser = false;
+          setBusy(true);
+          setStatus("Resuming");
+          break;
         case "synthesis_started":
           setStatus("Synthesizing");
           break;
         case "session_completed":
           source?.close();
+          awaitingUser = false;
           setStatus("Completed", "completed");
           activeAgentBox.textContent = "—";
           await loadSession(true);
@@ -556,6 +577,7 @@
           break;
         case "session_failed":
           source?.close();
+          awaitingUser = false;
           setStatus("Failed", "failed");
           activeAgentBox.textContent = "—";
           await loadSession(true);
@@ -567,7 +589,6 @@
     function connectEvents(url) {
       source?.close();
       source = new EventSource(url);
-
       for (const eventName of eventNames) {
         source.addEventListener(eventName, message => {
           try {
@@ -577,9 +598,8 @@
           }
         });
       }
-
       source.onerror = () => {
-        if (!finalDisplayed) {
+        if (!finalDisplayed && !awaitingUser) {
           setStatus("Reconnecting to event stream");
         }
       };
@@ -589,6 +609,7 @@
       source?.close();
       currentSessionId = null;
       finalDisplayed = false;
+      awaitingUser = false;
       seenEvents = new Set();
       sessionIdBox.textContent = "—";
       modeBox.textContent = "—";
@@ -600,34 +621,76 @@
       setStatus("Starting");
     }
 
+    async function ensureConversation() {
+      const saved = localStorage.getItem("agent_space_conversation_id");
+      if (saved) {
+        const response = await fetch(`/conversations/${saved}`);
+        if (response.ok) currentConversationId = saved;
+      }
+      if (!currentConversationId) {
+        const response = await fetch("/conversations", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({})
+        });
+        const conversation = await response.json();
+        currentConversationId = conversation.conversation_id;
+        localStorage.setItem(
+          "agent_space_conversation_id",
+          currentConversationId
+        );
+      }
+      conversationIdBox.textContent = currentConversationId;
+    }
+
+    async function loadConversationHistory() {
+      const response = await fetch(
+        `/conversations/${currentConversationId}/messages`
+      );
+      if (!response.ok) return;
+      const history = await response.json();
+      messages.innerHTML = "";
+      if (!history.length) {
+        addMessage("assistant", "Send a task to start an agent execution.");
+        return;
+      }
+      for (const message of history) {
+        addMessage(message.role, message.content);
+      }
+    }
+
     form.addEventListener("submit", async event => {
       event.preventDefault();
-      const task = input.value.trim();
-      if (!task) return;
+      const content = input.value.trim();
+      if (!content || !currentConversationId) return;
 
-      resetExecution();
-      addMessage("user", task);
+      const replying = awaitingUser;
+      if (!replying) resetExecution();
+      addMessage("user", content);
       input.value = "";
       setBusy(true);
 
       try {
-        const response = await fetch("/tasks/start", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ task })
-        });
-
+        const response = await fetch(
+          `/conversations/${currentConversationId}/messages`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ content })
+          }
+        );
         const data = await response.json();
         if (!response.ok) {
-          throw new Error(data.detail || "Could not start task.");
+          throw new Error(data.detail || "Could not send message.");
         }
 
         currentSessionId = data.session_id;
         sessionIdBox.textContent = currentSessionId;
+        awaitingUser = false;
         connectEvents(data.events_url);
       } catch (error) {
         setStatus("Failed", "failed");
-        addMessage("assistant", `Could not start task: ${error.message}`);
+        addMessage("assistant", `Could not send message: ${error.message}`);
         setBusy(false);
       }
     });
@@ -638,6 +701,20 @@
         form.requestSubmit();
       }
     });
+
+    async function initialize() {
+      try {
+        await ensureConversation();
+        await loadConversationHistory();
+        setStatus("Idle", "");
+        setBusy(false);
+      } catch (error) {
+        setStatus("Failed", "failed");
+        addMessage("assistant", `Could not initialize chat: ${error.message}`);
+      }
+    }
+
+    initialize();
   </script>
 </body>
 </html>

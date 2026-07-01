@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import inspect
 import json
@@ -5,55 +7,58 @@ import logging
 import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Literal, Optional
+from uuid import uuid4
 
 from share.local_llm import Copilot
-from share.schemas import ExecutionEvent
+from share.schemas import (
+    AgentMessage,
+    AgentRequest,
+    AgentResult,
+    ExecutionEvent,
+    ToolCall,
+    ToolResult,
+    UserContactRequest,
+)
 
 
 logger = logging.getLogger(__name__)
+Handler = Callable[..., Any]
+HistoryMode = Literal["trim", "summary"]
 
 TOOL_CALL_RE = re.compile(
-    r"<tool_call>\s*(.*?)\s*</tool_call>",
-    re.DOTALL,
+    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL
 )
-
 COMMUNICATION_RE = re.compile(
-    r"<communication>\s*(.*?)\s*</communication>",
-    re.DOTALL,
+    r"<communication>\s*(.*?)\s*</communication>", re.DOTALL
 )
-
+USER_CONTACT_RE = re.compile(
+    r"<user_contact>\s*(.*?)\s*</user_contact>", re.DOTALL
+)
 FINAL_ANSWER_RE = re.compile(
-    r"<final_answer>\s*(.*?)\s*</final_answer>",
-    re.DOTALL,
+    r"<final_answer>\s*(.*?)\s*</final_answer>", re.DOTALL
 )
 
-HistoryMode = Literal["trim", "summary"]
-Handler = Callable[..., Any]
+
+class UserContactRaised(Exception):
+    def __init__(self, contact: Dict[str, Any]) -> None:
+        super().__init__(contact["question"])
+        self.contact = contact
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Prompt and output parsing
-# ──────────────────────────────────────────────────────────────────────────────
-
-def render_tools_contract(
-    tool_spec: List[Dict[str, Any]],
-) -> str:
+def render_tools_contract(tool_spec: List[Dict[str, Any]]) -> str:
     if not tool_spec:
         return "- No tools are assigned."
 
     blocks = []
-
     for tool in tool_spec:
         schema = tool.get("inputSchema", {})
-
         blocks.append(
             f"- name: {tool.get('name', '')}\n"
             f"  description: {tool.get('description', '')}\n"
             f"  required: {schema.get('required', [])}\n"
-            f"  properties: "
-            f"{json.dumps(schema.get('properties', {}), ensure_ascii=False)}"
+            "  properties: "
+            + json.dumps(schema.get("properties", {}), ensure_ascii=False)
         )
-
     return "\n".join(blocks)
 
 
@@ -61,76 +66,66 @@ def build_strong_system_prompt(
     user_system_prompt: str,
     tool_spec: List[Dict[str, Any]],
     enable_communication: bool = True,
+    enable_user_contact: bool = True,
 ) -> str:
+    tags = ["<tool_call>"]
     communication_doc = ""
-    allowed_tags = "<tool_call> or <final_answer>"
+    contact_doc = ""
 
     if enable_communication:
-        allowed_tags = (
-            "<tool_call>, <communication>, or <final_answer>"
-        )
-
+        tags.append("<communication>")
         communication_doc = """
-When you need to send information to another runtime agent or the manager,
-use this EXACT format:
-
-<communication>{"recipient":"<recipient_id>", "message_type":"direct", "content":"<message>"}</communication>
-
-- message_type must be "direct", "broadcast", or "manager".
-- Use communication only for inter-agent coordination.
-- Do not use communication to answer the user.
+For inter-agent communication, use:
+<communication>{"recipient":"<recipient_id>","message_type":"direct","content":"<message>"}</communication>
+message_type must be direct, broadcast, or manager.
 """
 
+    if enable_user_contact:
+        tags.append("<user_contact>")
+        contact_doc = """
+When required user input is missing and execution cannot safely continue, use:
+<user_contact>{"question":"<question>","reason":"<why it is needed>","expected_response":"<free-text response expected>"}</user_contact>
+Ask one clear free-text question and pause. Do not use user contact for optional details.
+"""
+
+    tags.append("<final_answer>")
     control = f"""
-Follow the instructions precisely. Only output {allowed_tags} tags.
+Only output these tags: {', '.join(tags)}.
 
-You can call tools using this EXACT format:
+Tool call format:
+<tool_call>{{"name":"<tool_name>","arguments":{{...}}}}</tool_call>
+{communication_doc}{contact_doc}
+Final answer format:
+<final_answer>...final answer...</final_answer>
 
-<tool_call>{{"name":"<tool_name>", "arguments":{{...}}}}</tool_call>
-
-- Only output a tool call when you actually want it to be executed.
-{communication_doc}
-When you are ready to answer the user, output:
-
-<final_answer>...your final answer for the user...</final_answer>
-
-Available tools (schema):
+Available tools:
 {render_tools_contract(tool_spec)}
 
 Rules:
-- Output only valid tags.
-- Do not include commentary outside the tags.
-- You may output multiple non-final action tags in one response.
-- <final_answer> must be standalone and must not appear with other tags.
-- If a tool returns data, read the result and continue reasoning.
-- If required information is missing, use <final_answer> to ask the user
-  for the missing information.
+- Do not output text outside tags.
+- Multiple tool or communication tags are allowed in one response.
+- <user_contact> and <final_answer> must each be standalone.
+- Read tool results before continuing.
 """
-
     return f"{user_system_prompt}\n\n{control}".strip()
 
 
 def _extract_json_tags(
     text: str,
-    pattern: re.Pattern,
+    pattern: re.Pattern[str],
 ) -> List[Dict[str, Any]]:
-    result = []
-
+    values = []
     for match in pattern.finditer(text):
         try:
             value = json.loads(match.group(1).strip())
         except json.JSONDecodeError:
             continue
-
         if isinstance(value, dict):
-            result.append(value)
+            values.append(value)
+    return values
 
-    return result
 
-
-def extract_tool_calls(
-    text: str,
-) -> List[Dict[str, Any]]:
+def extract_tool_calls(text: str) -> List[Dict[str, Any]]:
     return [
         item
         for item in _extract_json_tags(text, TOOL_CALL_RE)
@@ -138,9 +133,7 @@ def extract_tool_calls(
     ]
 
 
-def extract_communications(
-    text: str,
-) -> List[Dict[str, Any]]:
+def extract_communications(text: str) -> List[Dict[str, Any]]:
     return [
         item
         for item in _extract_json_tags(text, COMMUNICATION_RE)
@@ -149,20 +142,19 @@ def extract_communications(
     ]
 
 
-def extract_final_answer(
-    text: str,
-) -> Optional[str]:
+def extract_user_contacts(text: str) -> List[Dict[str, Any]]:
+    return [
+        item
+        for item in _extract_json_tags(text, USER_CONTACT_RE)
+        if isinstance(item.get("question"), str)
+        and item["question"].strip()
+    ]
+
+
+def extract_final_answer(text: str) -> Optional[str]:
     match = FINAL_ANSWER_RE.search(text)
+    return match.group(1).strip() if match else None
 
-    if match is None:
-        return None
-
-    return match.group(1).strip()
-
-
-# ──────────────────────────────────────────────────────────────────────────────
-# Generic tool-calling agent
-# ──────────────────────────────────────────────────────────────────────────────
 
 class ToolCallingAgent:
     def __init__(
@@ -178,91 +170,51 @@ class ToolCallingAgent:
         max_history: int = 10,
         history_mode: HistoryMode = "trim",
         enable_communication: bool = True,
+        enable_user_contact: bool = True,
     ) -> None:
-        if max_steps < 1:
-            raise ValueError(
-                "max_steps must be at least 1."
-            )
-
-        if max_history < 1:
-            raise ValueError(
-                "max_history must be at least 1."
-            )
-
+        if max_steps < 1 or max_history < 1:
+            raise ValueError("max_steps and max_history must be at least 1.")
         if history_mode not in ("trim", "summary"):
-            raise ValueError(
-                "history_mode must be 'trim' or 'summary'."
-            )
+            raise ValueError("history_mode must be 'trim' or 'summary'.")
 
         self.llm = llm
         self.system_prompt = system_prompt
-
         self.tool_executor = tool_executor
         self.communication_handler = communication_handler
         self.event_handler = event_handler
-
         self.agent_id = agent_id
         self.instance_id = instance_id or agent_id
-
         self.max_steps = max_steps
         self.max_history = max_history
         self.history_mode = history_mode
         self.enable_communication = enable_communication
+        self.enable_user_contact = enable_user_contact
 
         self.user_turn = 0
         self.turn_step = 0
         self.summary_count = 0
-
         self.conversation: List[str] = []
-
-        # Messages waiting for the future Orchestrator.
         self.outbox: List[Dict[str, Any]] = []
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Conversation helpers
-    # ──────────────────────────────────────────────────────────────────────────
 
     def _compose_prompt(self) -> str:
         return "\n".join(self.conversation)
 
-    def _append_user(
-        self,
-        text: str,
-    ) -> None:
+    def _append_user(self, text: str) -> None:
         self.user_turn += 1
         self.turn_step = 0
-
-        self.conversation.append(
-            f"\n[USER {self.user_turn}]\n{text}"
-        )
+        self.conversation.append(f"\n[USER {self.user_turn}]\n{text}")
 
     @staticmethod
-    def _is_history_block(
-        item: str,
-    ) -> bool:
+    def _is_history_block(item: str) -> bool:
         item = item.lstrip()
+        return item.startswith("[INFERENCE ") or item.startswith("[SUMMARY ")
 
-        return (
-            item.startswith("[INFERENCE ")
-            or item.startswith("[SUMMARY ")
-        )
+    def _history_count(self) -> int:
+        return sum(self._is_history_block(item) for item in self.conversation)
 
-    def _count_history_blocks(self) -> int:
-        return sum(
-            self._is_history_block(item)
-            for item in self.conversation
-        )
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Trim history mode
-    # ──────────────────────────────────────────────────────────────────────────
-
-    def _trim_history_to(
-        self,
-        target: int,
-    ) -> None:
-        while self._count_history_blocks() > target:
-            start_index = next(
+    def _trim_history(self, target: int) -> None:
+        while self._history_count() > target:
+            start = next(
                 (
                     index
                     for index, item in enumerate(self.conversation)
@@ -270,534 +222,327 @@ class ToolCallingAgent:
                 ),
                 None,
             )
-
-            if start_index is None:
+            if start is None:
                 return
-
-            end_index = len(self.conversation)
-
-            for index in range(
-                start_index + 1,
-                len(self.conversation),
-            ):
+            end = len(self.conversation)
+            for index in range(start + 1, len(self.conversation)):
                 item = self.conversation[index].lstrip()
-
-                if (
-                    item.startswith("[INFERENCE ")
-                    or item.startswith("[SUMMARY ")
-                    or item.startswith("[USER ")
-                ):
-                    end_index = index
+                if item.startswith(("[INFERENCE ", "[SUMMARY ", "[USER ")):
+                    end = index
                     break
+            del self.conversation[start:end]
 
-            del self.conversation[start_index:end_index]
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Summary history mode
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def _replace_history_with_summary(
-        self,
-    ) -> bool:
-        current_conversation = self._compose_prompt().strip()
-
-        if not current_conversation:
-            return True
-
-        summary_system_prompt = (
-            "Summarize the conversation concisely. "
-            "Preserve objectives, constraints, decisions, important tool "
-            "results, unresolved questions, and information needed to "
-            "continue. Do not invent information. Return only the summary."
-        )
-
-        try:
-            summary = await asyncio.to_thread(
-                self.llm.infer,
-                user_prompt=current_conversation,
-                system_prompt=summary_system_prompt,
-                think=False,
-            )
-
-        except Exception:
-            logger.exception(
-                "Conversation summarization failed."
-            )
-            return False
-
-        if not summary or not summary.strip():
-            return False
-
-        self.summary_count += 1
-
-        # Replace the whole current conversation with one summary block.
-        self.conversation = [
-            f"[SUMMARY {self.summary_count}]\n"
-            f"{summary.strip()}"
-        ]
-
-        return True
-
-    async def _prepare_history(
-        self,
-    ) -> None:
-        # Include the next inference block in the calculation.
-        projected_count = (
-            self._count_history_blocks() + 1
-        )
-
-        if projected_count <= self.max_history:
+    async def _prepare_history(self) -> None:
+        if self._history_count() + 1 <= self.max_history:
             return
 
         if self.history_mode == "summary":
-            summarized = (
-                await self._replace_history_with_summary()
-            )
+            try:
+                summary = await asyncio.to_thread(
+                    self.llm.infer,
+                    user_prompt=self._compose_prompt(),
+                    system_prompt=(
+                        "Summarize concisely. Preserve objectives, constraints, "
+                        "decisions, tool results, unresolved questions, and all "
+                        "information needed to continue. Return only the summary."
+                    ),
+                    think=False,
+                )
+                if summary and summary.strip():
+                    self.summary_count += 1
+                    self.conversation = [
+                        f"[SUMMARY {self.summary_count}]\n{summary.strip()}"
+                    ]
+                    return
+            except Exception:
+                logger.exception("Conversation summarization failed.")
 
-            if summarized:
-                return
+        self._trim_history(self.max_history - 1)
 
-        # Trim is also used as fallback when summarization fails.
-        self._trim_history_to(
-            self.max_history - 1
+    def export_checkpoint(self) -> Dict[str, Any]:
+        return {
+            "agent_id": self.agent_id,
+            "instance_id": self.instance_id,
+            "conversation": list(self.conversation),
+            "outbox": list(self.outbox),
+            "user_turn": self.user_turn,
+            "turn_step": self.turn_step,
+            "summary_count": self.summary_count,
+        }
+
+    def restore_checkpoint(self, checkpoint: Dict[str, Any]) -> None:
+        self.instance_id = str(
+            checkpoint.get("instance_id") or self.instance_id
         )
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Result and handler helpers
-    # ──────────────────────────────────────────────────────────────────────────
+        self.conversation = list(checkpoint.get("conversation", []))
+        self.outbox = list(checkpoint.get("outbox", []))
+        self.user_turn = int(checkpoint.get("user_turn", 0))
+        self.turn_step = int(checkpoint.get("turn_step", 0))
+        self.summary_count = int(checkpoint.get("summary_count", 0))
 
     @staticmethod
-    def _format_result(
-        result: Any,
-    ) -> str:
+    async def _invoke(handler: Handler, *args: Any) -> Any:
+        result = handler(*args)
+        return await result if inspect.isawaitable(result) else result
+
+    @staticmethod
+    def _format_result(result: Any) -> str:
         if hasattr(result, "model_dump"):
             result = result.model_dump()
-
-        # Supports MCP-style results.
-        if (
-            isinstance(result, dict)
-            and isinstance(result.get("content"), list)
-        ):
-            text_parts = [
-                str(item.get("text", ""))
-                for item in result["content"]
-                if (
-                    isinstance(item, dict)
-                    and item.get("type") == "text"
-                )
-            ]
-
-            text = "\n".join(text_parts).strip()
-
-            if text:
-                return text
-
         if isinstance(result, str):
             return result
-
-        return json.dumps(
-            result,
-            ensure_ascii=False,
-            default=str,
-        )
-
-    @staticmethod
-    async def _invoke(
-        handler: Handler,
-        *args: Any,
-    ) -> Any:
-        result = handler(*args)
-
-        if inspect.isawaitable(result):
-            return await result
-
-        return result
+        return json.dumps(result, ensure_ascii=False, default=str)
 
     async def _emit_event(
         self,
         event_type: str,
         details: Optional[Dict[str, Any]] = None,
     ) -> None:
-        if self.event_handler is None:
-            return
+        if self.event_handler:
+            await self._invoke(
+                self.event_handler,
+                ExecutionEvent(
+                    event_type=event_type,
+                    agent_id=self.agent_id,
+                    instance_id=self.instance_id,
+                    details=details or {},
+                ),
+            )
 
-        await self._invoke(
-            self.event_handler,
-            ExecutionEvent(
-                event_type=event_type,
-                agent_id=self.agent_id,
-                instance_id=self.instance_id,
-                details=details or {},
-            ),
-        )
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Tool execution
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def _execute_tool(
-        self,
-        call: Dict[str, Any],
-    ) -> None:
+    async def _execute_tool(self, call: Dict[str, Any]) -> None:
         name = call["name"]
         arguments = call.get("arguments", {}) or {}
-
         if not isinstance(arguments, dict):
-            error = "Tool arguments must be a JSON object."
             self.conversation.append(
-                f"[TOOL:{name}:ERROR]\n{error}"
-            )
-            await self._emit_event(
-                "tool_failed",
-                {"tool_name": name, "error": error},
+                f"[TOOL:{name}:ERROR]\nTool arguments must be a JSON object."
             )
             return
-
         if self.tool_executor is None:
-            error = "No tool executor is configured."
             self.conversation.append(
-                f"[TOOL:{name}:ERROR]\n{error}"
-            )
-            await self._emit_event(
-                "tool_failed",
-                {"tool_name": name, "error": error},
+                f"[TOOL:{name}:ERROR]\nNo tool executor is configured."
             )
             return
 
         await self._emit_event(
-            "tool_running",
-            {
-                "tool_name": name,
-                "arguments": arguments,
-            },
+            "tool_running", {"tool_name": name, "arguments": arguments}
         )
-
         try:
-            result = await self._invoke(
-                self.tool_executor,
-                name,
-                arguments,
-            )
-
+            result = await self._invoke(self.tool_executor, name, arguments)
             self.conversation.append(
-                f"[TOOL:{name}:RESULT]\n"
-                f"{self._format_result(result)}"
+                f"[TOOL:{name}:RESULT]\n{self._format_result(result)}"
             )
-
-            success = True
-            error_text = None
-
-            if hasattr(result, "success"):
-                success = bool(result.success)
-                error_text = getattr(result, "error", None)
-            elif isinstance(result, dict) and "success" in result:
+            success = bool(getattr(result, "success", True))
+            error = getattr(result, "error", None)
+            if isinstance(result, dict) and "success" in result:
                 success = bool(result.get("success"))
-                error_text = result.get("error")
-
+                error = result.get("error")
             await self._emit_event(
                 "tool_completed" if success else "tool_failed",
-                {
-                    "tool_name": name,
-                    "success": success,
-                    "error": error_text,
-                },
+                {"tool_name": name, "success": success, "error": error},
             )
-
         except Exception as error:
-            logger.exception(
-                "Tool execution failed: %s",
-                name,
-            )
-
-            self.conversation.append(
-                f"[TOOL:{name}:ERROR]\n"
-                f"{type(error).__name__}: {error}"
-            )
-
+            logger.exception("Tool execution failed: %s", name)
+            error_text = f"{type(error).__name__}: {error}"
+            self.conversation.append(f"[TOOL:{name}:ERROR]\n{error_text}")
             await self._emit_event(
-                "tool_failed",
-                {
-                    "tool_name": name,
-                    "error": f"{type(error).__name__}: {error}",
-                },
+                "tool_failed", {"tool_name": name, "error": error_text}
             )
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # Agent communication
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def _handle_communication(
-        self,
-        message: Dict[str, Any],
-    ) -> None:
+    async def _handle_communication(self, item: Dict[str, Any]) -> None:
         message = {
             "sender": self.instance_id,
-            "recipient": message["recipient"],
-            "message_type": message.get(
-                "message_type",
-                "direct",
-            ),
-            "content": message["content"],
+            "recipient": item["recipient"],
+            "message_type": item.get("message_type", "direct"),
+            "content": item["content"],
         }
-
-        if message["message_type"] not in (
-            "direct",
-            "broadcast",
-            "manager",
-        ):
+        if message["message_type"] not in ("direct", "broadcast", "manager"):
             self.conversation.append(
-                "[COMMUNICATION:ERROR]\n"
-                "Invalid message_type."
+                "[COMMUNICATION:ERROR]\nInvalid message_type."
             )
             return
 
         self.outbox.append(message)
-
         self.conversation.append(
             "[COMMUNICATION:OUT]\n"
-            + json.dumps(
-                message,
-                ensure_ascii=False,
-            )
+            + json.dumps(message, ensure_ascii=False)
         )
+        if self.communication_handler:
+            try:
+                result = await self._invoke(self.communication_handler, message)
+                self.conversation.append(
+                    "[COMMUNICATION:RESULT]\n" + self._format_result(result)
+                )
+            except Exception as error:
+                logger.exception("Communication routing failed.")
+                self.conversation.append(
+                    f"[COMMUNICATION:ERROR]\n{type(error).__name__}: {error}"
+                )
 
-        # The future Orchestrator may collect messages from outbox.
-        if self.communication_handler is None:
-            self.conversation.append(
-                "[COMMUNICATION:STATUS]\n"
-                "Queued for the orchestrator."
-            )
-            return
-
-        try:
-            result = await self._invoke(
-                self.communication_handler,
-                message,
-            )
-
-            self.conversation.append(
-                "[COMMUNICATION:RESULT]\n"
-                f"{self._format_result(result)}"
-            )
-
-        except Exception as error:
-            logger.exception(
-                "Communication routing failed."
-            )
-
-            self.conversation.append(
-                "[COMMUNICATION:ERROR]\n"
-                f"{type(error).__name__}: {error}"
-            )
-
-    # ──────────────────────────────────────────────────────────────────────────
-    # Inference
-    # ──────────────────────────────────────────────────────────────────────────
-
-    async def step_once(
-        self,
-    ) -> Optional[str]:
+    async def step_once(self) -> Optional[str]:
         self.turn_step += 1
-
         await self._prepare_history()
-
-        self.conversation.append(
-            f"\n[INFERENCE {self.turn_step}]\n"
-        )
+        self.conversation.append(f"\n[INFERENCE {self.turn_step}]\n")
 
         try:
-            llm_output = await asyncio.to_thread(
+            output = await asyncio.to_thread(
                 self.llm.infer,
                 user_prompt=self._compose_prompt(),
                 system_prompt=self.system_prompt,
             )
-
         except Exception as error:
-            logger.exception(
-                "LLM inference failed."
-            )
-
+            logger.exception("LLM inference failed.")
             self.conversation.append(
                 f"[AGENT]\nLLM error: {type(error).__name__}: {error}"
             )
-
             return None
 
-        if not llm_output:
-            self.conversation.append(
-                "[AGENT]\nThe LLM did not return a response."
-            )
+        if not output:
+            self.conversation.append("[AGENT]\nThe LLM returned no response.")
             return None
 
-        self.conversation.append(
-            f"[AGENT]\nLLM raw output:\n{llm_output}"
-        )
+        self.conversation.append(f"[AGENT]\nLLM raw output:\n{output}")
+        tool_calls = extract_tool_calls(output)
+        communications = extract_communications(output)
+        contacts = extract_user_contacts(output)
+        final_answer = extract_final_answer(output)
 
-        tool_calls = extract_tool_calls(
-            llm_output
-        )
-
-        communications = extract_communications(
-            llm_output
-        )
-
-        final_answer = extract_final_answer(
-            llm_output
-        )
-
-        # A final answer must be exclusive.
-        if (
-            final_answer is not None
-            and (tool_calls or communications)
-        ):
+        exclusive = int(final_answer is not None) + len(contacts)
+        if exclusive > 1 or (exclusive and (tool_calls or communications)):
             self.conversation.append(
-                "[AGENT]\n"
-                "Invalid output. <final_answer> cannot appear "
-                "with <tool_call> or <communication>. Try again."
+                "[AGENT]\n<final_answer> and <user_contact> must be standalone."
             )
-
+            return None
+        if len(contacts) > 1:
+            self.conversation.append(
+                "[AGENT]\nOnly one <user_contact> is allowed."
+            )
             return None
 
         for call in tool_calls:
             await self._execute_tool(call)
-
         if communications:
             if self.enable_communication:
                 for message in communications:
-                    await self._handle_communication(
-                        message
-                    )
+                    await self._handle_communication(message)
             else:
                 self.conversation.append(
-                    "[COMMUNICATION:ERROR]\n"
-                    "Communication is disabled for this agent."
+                    "[COMMUNICATION:ERROR]\nCommunication is disabled."
                 )
-
-        # Continue inference after performing actions.
         if tool_calls or communications:
             return None
 
+        if contacts:
+            if not self.enable_user_contact:
+                self.conversation.append(
+                    "[USER_CONTACT:ERROR]\nUser contact is disabled."
+                )
+                return None
+            contact = {
+                "question": contacts[0]["question"].strip(),
+                "reason": str(contacts[0].get("reason", "")).strip(),
+                "expected_response": str(
+                    contacts[0].get(
+                        "expected_response", "Free-text response"
+                    )
+                ).strip(),
+            }
+            self.conversation.append(
+                "[USER_CONTACT:REQUESTED]\n"
+                + json.dumps(contact, ensure_ascii=False)
+            )
+            raise UserContactRaised(contact)
+
         if final_answer is not None:
             self.conversation.append(
-                f"[FINAL FOR USER {self.user_turn}]\n"
-                f"{final_answer}"
+                f"[FINAL FOR USER {self.user_turn}]\n{final_answer}"
             )
-
             return final_answer
 
+        valid = ["<tool_call>"]
         if self.enable_communication:
-            valid_tags = (
-                "<tool_call>, <communication>, "
-                "or <final_answer>"
-            )
-        else:
-            valid_tags = (
-                "<tool_call> or <final_answer>"
-            )
-
+            valid.append("<communication>")
+        if self.enable_user_contact:
+            valid.append("<user_contact>")
+        valid.append("<final_answer>")
         self.conversation.append(
-            "[AGENT]\n"
-            "Your previous output did not include a valid "
-            f"{valid_tags} tag. Try again."
+            "[AGENT]\nNo valid tag found. Use: " + ", ".join(valid)
         )
-
         return None
 
-    async def run(
-        self,
-        user_prompt: str,
-    ) -> str:
-        self._append_user(user_prompt)
-
+    async def _continue(self) -> str:
         for _ in range(self.max_steps):
             final_answer = await self.step_once()
-
             if final_answer is not None:
                 return final_answer
-
         return (
             "Reached the maximum reasoning steps without a "
             "<final_answer>. Please refine the request."
         )
 
-    # ──────────────────────────────────────────────────────────────────────────
-    # CLI testing
-    # ──────────────────────────────────────────────────────────────────────────
+    async def run(self, user_prompt: str) -> str:
+        self._append_user(user_prompt)
+        return await self._continue()
 
-    async def chat_cli(
-        self,
-        first_user_prompt: Optional[str] = None,
-    ) -> None:
-        pending_prompt = first_user_prompt
-
-        print(
-            "Interactive mode. "
-            "Enter=continue, new text=new turn, exit()=stop.\n"
+    async def resume(self, user_response: str) -> str:
+        self._append_user(
+            "Response to the pending user-contact request:\n" + user_response
         )
-
-        while True:
-            try:
-                if pending_prompt is not None:
-                    user_text = pending_prompt
-                    pending_prompt = None
-                else:
-                    user_text = input(
-                        "You: "
-                    ).strip()
-
-            except (EOFError, KeyboardInterrupt):
-                print("\nBye.")
-                return
-
-            if not user_text:
-                continue
-
-            if user_text.lower() == "exit()":
-                print("Bye.")
-                return
-
-            self._append_user(user_text)
-
-            for _ in range(self.max_steps):
-                final_answer = await self.step_once()
-
-                if final_answer is not None:
-                    print(
-                        "\n=== Final Answer ===\n"
-                    )
-                    print(final_answer)
-                    break
-
-                try:
-                    follow_up = input(
-                        "(Enter=continue, "
-                        "new text=new turn): "
-                    ).strip()
-
-                except (EOFError, KeyboardInterrupt):
-                    print("\nBye.")
-                    return
-
-                if not follow_up:
-                    continue
-
-                if follow_up.lower() == "exit()":
-                    print("Bye.")
-                    return
-
-                pending_prompt = follow_up
-                break
-
-            else:
-                print(
-                    "Reached the maximum reasoning steps "
-                    "without a <final_answer>."
-                )
+        return await self._continue()
 
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Agent builder
-# ──────────────────────────────────────────────────────────────────────────────
+async def run_resumable(
+    agent: ToolCallingAgent,
+    request: AgentRequest,
+    initial_prompt: str,
+) -> str:
+    if request.checkpoint:
+        if request.user_response is None:
+            raise ValueError("user_response is required when resuming.")
+        agent.restore_checkpoint(
+            request.checkpoint.get("agent", request.checkpoint)
+        )
+        return await agent.resume(request.user_response)
+    return await agent.run(initial_prompt)
+
+
+def build_waiting_result(
+    request: AgentRequest,
+    agent: ToolCallingAgent,
+    contact: Dict[str, Any],
+    *,
+    checkpoint: Optional[Dict[str, Any]] = None,
+    tool_calls: Optional[List[ToolCall]] = None,
+    tool_results: Optional[List[ToolResult]] = None,
+    messages: Optional[List[AgentMessage]] = None,
+) -> AgentResult:
+    payload = {"agent": agent.export_checkpoint()}
+    payload.update(checkpoint or {})
+    user_contact = UserContactRequest(
+        contact_id=f"contact_{uuid4().hex[:12]}",
+        conversation_id=request.conversation_id or "",
+        session_id=request.session_id,
+        agent_id=agent.agent_id,
+        agent_name=agent.agent_id.replace("_", " ").title(),
+        instance_id=agent.instance_id,
+        question=contact["question"],
+        reason=contact.get("reason", ""),
+        expected_response=contact.get(
+            "expected_response", "Free-text response"
+        ),
+    )
+    return AgentResult(
+        agent_id=agent.agent_id,
+        instance_id=agent.instance_id,
+        status="WAITING_FOR_USER",
+        tool_calls=tool_calls or [],
+        tool_results=tool_results or [],
+        messages=messages or [
+            AgentMessage.model_validate(item) for item in agent.outbox
+        ],
+        user_contact=user_contact,
+        checkpoint=payload,
+    )
+
 
 def build_agent(
     system_prompt_path: str,
@@ -813,27 +558,17 @@ def build_agent(
     max_history: int = 16,
     history_mode: HistoryMode = "trim",
     enable_communication: bool = True,
+    enable_user_contact: bool = True,
 ) -> ToolCallingAgent:
-    system_prompt_text = Path(
-        system_prompt_path
-    ).read_text(
-        encoding="utf-8"
-    ).strip()
-
-    llm = Copilot(
-        model=model,
-        base_url=base_url,
-    )
-
-    system_prompt = build_strong_system_prompt(
-        system_prompt_text,
-        tool_spec or [],
-        enable_communication=enable_communication,
-    )
-
+    prompt = Path(system_prompt_path).read_text(encoding="utf-8").strip()
     return ToolCallingAgent(
-        llm=llm,
-        system_prompt=system_prompt,
+        llm=Copilot(model=model, base_url=base_url),
+        system_prompt=build_strong_system_prompt(
+            prompt,
+            tool_spec or [],
+            enable_communication=enable_communication,
+            enable_user_contact=enable_user_contact,
+        ),
         tool_executor=tool_executor,
         communication_handler=communication_handler,
         event_handler=event_handler,
@@ -843,50 +578,5 @@ def build_agent(
         max_history=max_history,
         history_mode=history_mode,
         enable_communication=enable_communication,
+        enable_user_contact=enable_user_contact,
     )
-
-
-if __name__ == "__main__":
-    # async def main():
-    #     first_prompt = "hello"
-
-    #     agent = build_agent(
-    #         system_prompt_path="./agent/analyze_agent/system_prompt.txt",
-    #         model="gemma4:31b-cloud",
-    #         base_url="http://localhost:11434",
-    #     )
-
-    #     await agent.chat_cli(
-    #         first_user_prompt=first_prompt,
-    #     )
-
-    # asyncio.run(main())
-
-
-    async def main():
-        from share.registry import Registry
-        from share.tool_loader import ToolLoader
-
-        registry = Registry()
-
-        tool_loader = ToolLoader(
-            registry=registry,
-            assigned_tool_ids=[
-                "get_current_datetime",
-            ],
-        )
-
-        agent = build_agent(
-            system_prompt_path=(
-                "./agent/analyze_agent/system_prompt.txt"
-            ),
-            model="gemma4:31b-cloud",
-            base_url="http://localhost:11434",
-            tool_spec=tool_loader.get_tool_spec(),
-            tool_executor=tool_loader.execute,
-            history_mode="summary",
-        )
-
-        await agent.chat_cli()
-
-    asyncio.run(main())

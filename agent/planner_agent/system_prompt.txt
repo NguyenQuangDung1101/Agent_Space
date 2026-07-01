@@ -49,3 +49,5 @@ The content inside <final_answer> must be one valid JSON object:
 }
 
 Do not use a Markdown code block.
+
+If required information is missing and a valid team plan cannot be created, use <user_contact> instead of inventing assumptions.

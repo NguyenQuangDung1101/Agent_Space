@@ -34,3 +34,5 @@ The content inside <final_answer> must be one valid JSON object:
 }
 
 Do not use a Markdown code block.
+
+If required information is missing and you cannot safely select a valid execution solution, use <user_contact> instead of returning an incomplete analysis.
