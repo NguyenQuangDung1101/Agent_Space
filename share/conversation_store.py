@@ -209,6 +209,17 @@ class ConversationStore:
             for item in self._read(path, [])
         ]
 
+    def list_conversation_contacts(
+        self,
+        conversation_id: str,
+    ) -> list[UserContactRequest]:
+        contacts = []
+        for session in self.list_sessions(conversation_id):
+            contacts.extend(
+                self.list_contacts(conversation_id, session.session_id)
+            )
+        return sorted(contacts, key=lambda item: item.created_at)
+
     def pending_session(self, conversation_id: str) -> Optional[SessionRecord]:
         sessions_root = self.conversation_dir(conversation_id) / "sessions"
         waiting = []

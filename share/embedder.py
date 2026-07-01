@@ -7,6 +7,10 @@ import requests
 from dotenv import load_dotenv
 
 
+DEFAULT_EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+DEFAULT_TIMEOUT = 3000.0
+
+
 class OllamaEmbedder:
     def __init__(
         self,
@@ -16,12 +20,12 @@ class OllamaEmbedder:
     ) -> None:
         load_dotenv()
         self.model = model or os.getenv(
-            "EMBEDDING_MODEL", "qwen3-embedding:0.6b"
+            "EMBEDDING_MODEL", DEFAULT_EMBEDDING_MODEL
         )
         self.base_url = (
             base_url or os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
         ).rstrip("/")
-        self.timeout = timeout or float(os.getenv("EMBEDDING_TIMEOUT", "120"))
+        self.timeout = DEFAULT_TIMEOUT if timeout is None else timeout
 
     def embed(self, text: str) -> list[float]:
         return self.embed_many([text])[0]

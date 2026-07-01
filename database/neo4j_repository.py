@@ -372,6 +372,53 @@ class Neo4jRepository:
                     error=tool_result.error,
                 )
 
+    def validate_consistency(self, store: Any) -> dict[str, Any]:
+        if not self.enabled:
+            return {"ok": True, "neo4j_enabled": False}
+
+        conversations = store.list_conversations()
+        file_counts = {
+            "conversations": len(conversations),
+            "messages": 0,
+            "sessions": 0,
+            "contacts": 0,
+            "memories": len(conversations),
+        }
+        for conversation in conversations:
+            conversation_id = conversation.conversation_id
+            file_counts["messages"] += len(
+                store.list_messages(conversation_id)
+            )
+            sessions = store.list_sessions(conversation_id)
+            file_counts["sessions"] += len(sessions)
+            for session in sessions:
+                file_counts["contacts"] += len(
+                    store.list_contacts(conversation_id, session.session_id)
+                )
+
+        labels = {
+            "conversations": "Conversation",
+            "messages": "Message",
+            "sessions": "Session",
+            "contacts": "UserContact",
+            "memories": "MemorySnapshot",
+        }
+        graph_counts = {}
+        for key, label in labels.items():
+            rows = self._run(
+                f"MATCH (n:{label} {{domain: $domain}}) "
+                "RETURN count(n) AS count",
+                domain=AGENT_SPACE_DOMAIN,
+            )
+            graph_counts[key] = int(rows[0]["count"] if rows else 0)
+
+        return {
+            "ok": file_counts == graph_counts,
+            "neo4j_enabled": True,
+            "file": file_counts,
+            "neo4j": graph_counts,
+        }
+
     def rebuild(self, store: Any, registry: Any) -> None:
         self.verify()
         self.apply_schema()

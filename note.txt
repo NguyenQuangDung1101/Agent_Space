@@ -2,11 +2,12 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 .\agentspace\Scripts\Activate.ps1
 
 ollama signin
-python -m share.agent 
-python -m uvicorn agent.agent_of_requirement.server:app --port 800
+Agent Space GUI: http://127.0.0.1:8000
+API docs: http://127.0.0.1:8000/docs
+Health check: http://127.0.0.1:8000/health
+Neo4j Browser: http://localhost:7474
 
 docker compose up -d neo4j
-uvicorn app:app --host 127.0.0.1 --port 8000
 
 neo4j browser: http://localhost:7474
 

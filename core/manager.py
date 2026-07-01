@@ -28,6 +28,7 @@ from share.schemas import (
     SessionRecord,
     SingleAgentPlan,
     TeamPlan,
+    UserContactRequest,
     utc_now,
 )
 
@@ -125,6 +126,15 @@ class AgentSpaceManager:
 
     def get_messages(self, conversation_id: str) -> list[Message]:
         return self.store.list_messages(conversation_id)
+
+    def get_sessions(self, conversation_id: str) -> list[SessionRecord]:
+        return self.store.list_sessions(conversation_id)
+
+    def get_contacts(
+        self,
+        conversation_id: str,
+    ) -> list[UserContactRequest]:
+        return self.store.list_conversation_contacts(conversation_id)
 
     def get_session(self, session_id: str) -> SessionRecord:
         return self.store.get_session(session_id)
@@ -1224,6 +1234,20 @@ class AgentSpaceManager:
                             "question": contact.question,
                             "reason": contact.reason,
                             "expected_response": contact.expected_response,
+                        },
+                    ),
+                )
+                self._record_event(
+                    session,
+                    events,
+                    ExecutionEvent(
+                        event_type="session_paused",
+                        agent_id=contact.agent_id,
+                        instance_id=contact.instance_id,
+                        task=session.original_request,
+                        details={
+                            "contact_id": contact.contact_id,
+                            "agent_name": contact.agent_name,
                         },
                     ),
                 )

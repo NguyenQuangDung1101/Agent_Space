@@ -11,9 +11,11 @@ from pydantic import BaseModel, ConfigDict, Field
 from core.manager import AgentSpaceManager
 from share.schemas import (
     Conversation,
+    ExecutionEvent,
     ExecutionResult,
     Message,
     SessionRecord,
+    UserContactRequest,
 )
 
 
@@ -70,7 +72,7 @@ async def lifespan(app: FastAPI):
     manager.close()
 
 
-app = FastAPI(title="Agent Space", version="0.6.0", lifespan=lifespan)
+app = FastAPI(title="Agent Space", version="0.7.0", lifespan=lifespan)
 GUI_FILE = Path(__file__).resolve().parent / "gui" / "index.html"
 
 
@@ -122,6 +124,32 @@ async def get_conversation_messages(
         raise HTTPException(status_code=404, detail=str(error)) from error
 
 
+@app.get(
+    "/conversations/{conversation_id}/sessions",
+    response_model=list[SessionRecord],
+)
+async def get_conversation_sessions(
+    conversation_id: str,
+) -> list[SessionRecord]:
+    try:
+        return manager.get_sessions(conversation_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/conversations/{conversation_id}/contacts",
+    response_model=list[UserContactRequest],
+)
+async def get_conversation_contacts(
+    conversation_id: str,
+) -> list[UserContactRequest]:
+    try:
+        return manager.get_contacts(conversation_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
 @app.post(
     "/conversations/{conversation_id}/messages",
     response_model=MessageStartedResponse,
@@ -156,6 +184,17 @@ async def create_message(
 async def get_session(session_id: str) -> SessionRecord:
     try:
         return manager.get_session(session_id)
+    except FileNotFoundError as error:
+        raise HTTPException(status_code=404, detail=str(error)) from error
+
+
+@app.get(
+    "/sessions/{session_id}/events/history",
+    response_model=list[ExecutionEvent],
+)
+async def get_session_events(session_id: str) -> list[ExecutionEvent]:
+    try:
+        return manager.get_events(session_id)
     except FileNotFoundError as error:
         raise HTTPException(status_code=404, detail=str(error)) from error
 
