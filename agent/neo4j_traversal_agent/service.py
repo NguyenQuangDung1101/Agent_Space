@@ -53,30 +53,18 @@ class Neo4jTraversalAgentService:
             ToolCall.model_validate(item) for item in saved.get("tool_calls", [])
         ]
         tool_results = [
-            ToolResult.model_validate(item) for item in saved.get("tool_results", [])
+            ToolResult.model_validate(item)
+            for item in saved.get("tool_results", [])
         ]
+
         try:
             if not self.registry.can_call(request.caller_id, AGENT_ID):
                 raise PermissionError(
                     f"'{request.caller_id}' cannot call '{AGENT_ID}'."
                 )
 
-            anchor_used = any(
-                result.name == "get_anchor_node" and result.success
-                for result in tool_results
-            )
-
             def execute_tool(name: str, arguments: dict[str, Any]) -> ToolResult:
-                nonlocal anchor_used
                 tool_calls.append(ToolCall(name=name, arguments=arguments))
-                if name != "get_anchor_node" and not anchor_used:
-                    result = ToolResult(
-                        name=name,
-                        success=False,
-                        error="get_anchor_node must be called before traversal.",
-                    )
-                    tool_results.append(result)
-                    return result
                 try:
                     result = ToolResult(
                         name=name,
@@ -89,8 +77,6 @@ class Neo4jTraversalAgentService:
                         success=False,
                         error=f"{type(error).__name__}: {error}",
                     )
-                if name == "get_anchor_node" and result.success:
-                    anchor_used = True
                 tool_results.append(result)
                 return result
 
@@ -109,41 +95,51 @@ class Neo4jTraversalAgentService:
                 history_mode="summary",
                 enable_communication=True,
             )
-            prompt = {
-                "request": request.task,
-                "context": request.context,
-            }
-            try:
-                answer = await run_resumable(
-                    agent,
-                    request,
-                    "Retrieve relevant external Knowledge graph information:\n\n"
-                    + json.dumps(prompt, ensure_ascii=False, indent=2, default=str),
+            task = request.task
+            if request.context:
+                task += "\n\nContext:\n" + json.dumps(
+                    request.context,
+                    ensure_ascii=False,
+                    default=str,
                 )
+
+            try:
+                final_answer = await run_resumable(agent, request, task)
             except UserContactRaised as signal:
                 return build_waiting_result(
                     request,
                     agent,
                     signal.contact,
                     checkpoint={
-                        "tool_calls": [item.model_dump(mode="json") for item in tool_calls],
-                        "tool_results": [item.model_dump(mode="json") for item in tool_results],
+                        "tool_calls": [
+                            item.model_dump(mode="json") for item in tool_calls
+                        ],
+                        "tool_results": [
+                            item.model_dump(mode="json") for item in tool_results
+                        ],
                     },
                     tool_calls=tool_calls,
                     tool_results=tool_results,
                 )
-            if answer.startswith(MAX_STEPS_MESSAGE):
-                raise RuntimeError(answer)
-            if not anchor_used:
-                raise RuntimeError("Traversal completed without get_anchor_node.")
+
             messages = [
                 AgentMessage.model_validate(item) for item in agent.outbox
             ]
+            if final_answer.startswith(MAX_STEPS_MESSAGE):
+                return AgentResult(
+                    agent_id=AGENT_ID,
+                    instance_id=agent.instance_id,
+                    status="FAILED",
+                    tool_calls=tool_calls,
+                    tool_results=tool_results,
+                    messages=messages,
+                    error=final_answer,
+                )
             return AgentResult(
                 agent_id=AGENT_ID,
                 instance_id=agent.instance_id,
                 status="COMPLETED",
-                final_answer=answer,
+                final_answer=final_answer,
                 tool_calls=tool_calls,
                 tool_results=tool_results,
                 messages=messages,

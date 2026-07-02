@@ -9,7 +9,6 @@ from typing import Any
 from database.neo4j_repository import Neo4jSettings, json_text
 from neo4j import GraphDatabase
 from share.embedder import OllamaEmbedder
-from share.schemas import ModificationPlan, ModificationResult
 
 
 KNOWLEDGE_DOMAIN = "knowledge"
@@ -518,88 +517,6 @@ class KnowledgeRepository:
             "root_id": KNOWLEDGE_ROOT_ID,
             "orphan_ids": orphan_ids,
         }
-
-    def apply_plan(self, plan: ModificationPlan) -> ModificationResult:
-        applied_nodes: list[str] = []
-        applied_relationships: list[str] = []
-        failures: list[str] = []
-        if plan.operation == "import" and plan.import_plan:
-            order = {
-                "KnowledgeDocument": 0,
-                "KnowledgeEntity": 1,
-                "KnowledgeChunk": 2,
-            }
-            nodes = sorted(
-                plan.import_plan.nodes,
-                key=lambda item: order[item.kind],
-            )
-            for node in nodes:
-                try:
-                    self.create_node(
-                        node.id,
-                        node.kind,
-                        node.name,
-                        node.description,
-                        node.properties,
-                        node.parent_id,
-                    )
-                    applied_nodes.append(node.id)
-                except Exception as error:
-                    failures.append(f"node {node.id}: {type(error).__name__}: {error}")
-            for relationship in plan.import_plan.relationships:
-                try:
-                    self.create_relationship(
-                        relationship.source_id,
-                        relationship.target_id,
-                        relationship.type,
-                        relationship.properties,
-                    )
-                    applied_relationships.append(
-                        f"{relationship.source_id}-[{relationship.type}]->"
-                        f"{relationship.target_id}"
-                    )
-                except Exception as error:
-                    failures.append(
-                        "relationship "
-                        f"{relationship.source_id}-[{relationship.type}]->"
-                        f"{relationship.target_id}: {type(error).__name__}: {error}"
-                    )
-        elif plan.delete_plan:
-            deleted_ids = set(plan.delete_plan.node_ids)
-            for node_id in plan.delete_plan.node_ids:
-                try:
-                    self.delete_node(node_id)
-                    applied_nodes.append(f"deleted {node_id}")
-                except Exception as error:
-                    failures.append(f"node {node_id}: {type(error).__name__}: {error}")
-            for relationship in plan.delete_plan.relationships:
-                if (
-                    relationship.source_id in deleted_ids
-                    or relationship.target_id in deleted_ids
-                ):
-                    continue
-                try:
-                    self.delete_relationship(
-                        relationship.source_id,
-                        relationship.target_id,
-                        relationship.type,
-                    )
-                    applied_relationships.append(
-                        f"deleted {relationship.source_id}-"
-                        f"[{relationship.type}]->{relationship.target_id}"
-                    )
-                except Exception as error:
-                    failures.append(
-                        f"relationship delete: {type(error).__name__}: {error}"
-                    )
-        validation = self.validate()
-        return ModificationResult(
-            success=not failures and validation["valid"],
-            applied_nodes=applied_nodes,
-            applied_relationships=applied_relationships,
-            failures=failures,
-            validation=validation,
-        )
 
 
 @lru_cache(maxsize=1)

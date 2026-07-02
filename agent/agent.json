@@ -69,12 +69,12 @@
   {
     "id": "knowledge_graph_modification_agent",
     "type": "fixed",
-    "description": "Analyze documents, propose reviewed import/delete plans, and modify only the protected external Knowledge graph after user approval.",
+    "description": "Inspect and modify the protected external Knowledge graph using private tools and user contact when useful.",
     "capabilities": [
       "document_analysis",
       "knowledge_graph_import",
       "knowledge_graph_delete",
-      "approval_gated_modification"
+      "knowledge_graph_validation"
     ],
     "selectable_as_worker": true,
     "path": "agent/knowledge_graph_modification_agent",
@@ -88,7 +88,7 @@
   {
     "id": "neo4j_traversal_agent",
     "type": "fixed",
-    "description": "Retrieve external Knowledge graph data using private anchor search, hop expansion, and path-finding tools.",
+    "description": "Retrieve external Knowledge graph data using private search, hop-expansion, and path-finding tools in any suitable order.",
     "capabilities": [
       "knowledge_graph_retrieval",
       "hybrid_anchor_search",

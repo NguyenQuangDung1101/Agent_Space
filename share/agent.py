@@ -25,9 +25,7 @@ logger = logging.getLogger(__name__)
 Handler = Callable[..., Any]
 HistoryMode = Literal["trim", "summary"]
 
-TOOL_CALL_RE = re.compile(
-    r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL
-)
+TOOL_CALL_RE = re.compile(r"<tool_call>\s*(.*?)\s*</tool_call>", re.DOTALL)
 COMMUNICATION_RE = re.compile(
     r"<communication>\s*(.*?)\s*</communication>", re.DOTALL
 )
@@ -83,9 +81,9 @@ message_type must be direct, broadcast, or manager.
     if enable_user_contact:
         tags.append("<user_contact>")
         contact_doc = """
-When required user input is missing and execution cannot safely continue, use:
-<user_contact>{"question":"<question>","reason":"<why it is needed>","expected_response":"<free-text response expected>"}</user_contact>
-Ask one clear free-text question and pause. Do not use user contact for optional details.
+When user input, clarification, review, feedback, or approval is needed, use:
+<user_contact>{"question":"<question or review message>","reason":"<why a response is needed>","expected_response":"<free-text response expected>"}</user_contact>
+Send one clear free-text message and pause until the user replies.
 """
 
     tags.append("<final_answer>")

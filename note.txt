@@ -9,8 +9,6 @@ Neo4j Browser: http://localhost:7474
 
 docker compose up -d neo4j
 
-neo4j browser: http://localhost:7474
-
 
 # CURRENT STATE
     Single/team execution, session persistence, SSE events, and chat GUI are implemented.
@@ -18,59 +16,6 @@ neo4j browser: http://localhost:7474
     Conversation memory, pause/resume user contact, Knowledge agents, and Neo4j persistence are not implemented.
 
 # NEXT IMPLEMENTATION STEPS
-
-1. Add Conversation layer
-    ├── Create Conversation, Message, and ConversationMemory schemas
-    ├── Store sessions inside their parent conversation
-    ├── Add conversation and message APIs
-    └── Load shared conversation memory into new sessions
-
-2. Add user-contact pause/resume
-    ├── Add UserContactRequest schema and WAITING_FOR_USER status
-    ├── Allow agents to raise free-text questions for the user
-    ├── Save a resumable agent/session checkpoint
-    └── Resume the same session after the user replies
-
-3. Update Manager and Orchestrator
-    ├── Distinguish new task messages from user-contact replies
-    ├── Pause the whole team while waiting for user input
-    ├── Resume the requesting agent with the user's response
-    └── Update conversation memory after session completion
-
-4. Add Knowledge Graph Modification Agent
-    ├── Analyze documents and create an ModificationPlan (ImportPlan/DeletePlan)
-    ├── Request user review before importing or deleting
-    ├── Import or delete approved data using private built-in tools
-    ├── Return validation results and failures
-    └── Only work and modify on area connect to Knowledge entity (can not delete this big Knowledge node)
-
-5. Add Neo4j Traversal Agent
-    ├── Receive request
-    ├── Perform traversal technique using tools (standard is to use get_anchor_node to get related node, then use other tool to explore)
-    ├── Retrieve data (nodes and relationships) and return relevant response
-    ├── Use only private Neo4j traversal tools
-    └── Only work on area connect to Knowledge entity
-
-6. Add Neo4j integration
-    ├── Reset and rebuild Agent Space data when app.py starts
-    ├── Synchronize registered agents and shared tools
-    ├── Store conversations, sessions, plans, executions, and contacts
-    ├── Keep the external Knowledge graph as a separate graph domain
-    └── Keep file storage as the audit log
-
-7. Update GUI and execution events
-    ├── Create and select conversations
-    ├── Display connected chat history
-    ├── Display user-contact questions and accept free-text replies
-    └── Show paused, resumed, completed, and failed session states
-
-8. Validate the complete flow
-    ├── Multi-session conversation memory
-    ├── Single/team pause and resume
-    ├── Knowledge modification approval
-    ├── Knowledge graph retrieval
-    └── File and Neo4j persistence consistency
-```
 
 
 # UPDATED AGENT SPACE REQUIREMENT
